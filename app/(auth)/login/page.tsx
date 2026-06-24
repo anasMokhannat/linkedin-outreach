@@ -48,8 +48,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="container">
-      <div className="card" style={{ maxWidth: 440, margin: '60px auto' }}>
+    <main className="center-wrap">
+      <div className="card auth-card">
         <h1>Sign in</h1>
         <p className="muted">
           We use “Sign in with LinkedIn” only to identify you. Connecting your session for syncing

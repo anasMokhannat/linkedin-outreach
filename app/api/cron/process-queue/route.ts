@@ -3,8 +3,8 @@ import { json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { serverEnv } from '@/lib/env';
 import { readCookie } from '@/lib/vault';
-import { startActorRun, residentialProxy } from '@/lib/apify';
 import { capStatus, DEFAULT_CAP_CONFIG } from '@/lib/caps';
+import { getProvider } from '@/lib/providers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
   }
 
   const svc = createSupabaseServiceClient();
+  const provider = getProvider();
   const nowIso = new Date().toISOString();
 
   // Pull a bounded batch of due items across all users.
@@ -123,30 +124,38 @@ export async function GET(req: NextRequest) {
       }
 
       const profileUrl = (message.leads as { profile_url?: string } | null)?.profile_url;
-      const liAt = await readCookie(gate.liSecretId!);
+      // Decrypt the cookie just-in-time only if the active provider needs it.
+      const liAt = provider.requiresCookie ? await readCookie(gate.liSecretId!) : '';
 
-      const run = await startActorRun('sendDm', {
-        input: {
-          // TODO(confirm): exact input schema of APIFY_ACTOR_SEND_DM.
-          cookie: [{ name: 'li_at', value: liAt, domain: '.linkedin.com' }],
-          li_at: liAt,
-          profileUrl,
-          message: message.body,
-          proxy: residentialProxy(gate.proxyCountry),
-        },
+      const result = await provider.sendMessage({
+        userId: item.user_id,
+        messageId: item.message_id,
+        queueId: item.id,
+        liAt,
         proxyCountry: gate.proxyCountry,
-        webhookPayload: {
-          userId: item.user_id,
-          action: 'send_dm',
-          messageId: item.message_id,
-          queueId: item.id,
-        },
+        profileUrl,
+        body: message.body,
       });
 
-      await svc
-        .from('send_queue')
-        .update({ apify_run_id: run.runId })
-        .eq('id', item.id);
+      if (result.mode === 'async') {
+        // A webhook will finalize this run (sent / retry / fail / needs_reauth).
+        await svc.from('send_queue').update({ apify_run_id: result.runId }).eq('id', item.id);
+      } else {
+        // Sync provider delivered inline — finalize here, same as the webhook would.
+        await svc
+          .from('messages')
+          .update({ status: 'sent', sent_at: new Date().toISOString() })
+          .eq('id', item.message_id)
+          .eq('user_id', item.user_id);
+        await svc.from('send_queue').update({ status: 'done' }).eq('id', item.id);
+        await svc.rpc('app_increment_daily_usage', { p_user_id: item.user_id, p_day: today });
+        await svc.from('send_log').insert({
+          user_id: item.user_id,
+          message_id: item.message_id,
+          event: 'dm_sent',
+          detail: { provider: provider.name },
+        });
+      }
 
       gate.remaining -= 1; // optimistically reserve cap room within this tick
       dispatched++;

@@ -29,6 +29,10 @@ export const serverEnv = {
   supabaseServiceRoleKey: () => required('SUPABASE_SERVICE_ROLE_KEY'),
   cookieEncKey: () => required('COOKIE_ENC_KEY'),
 
+  // Which LinkedIn provider powers connection-fetch + DM-send: 'apify' (default,
+  // cookie-based) or 'linkedin-api' (official API; partner-gated, stubbed).
+  linkedinProvider: () => optional('LINKEDIN_PROVIDER', 'apify'),
+
   apifyToken: () => required('APIFY_TOKEN'),
   apifyWebhookSecret: () => required('APIFY_WEBHOOK_SECRET'),
 

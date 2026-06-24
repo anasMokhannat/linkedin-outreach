@@ -7,8 +7,8 @@ export default async function Home() {
   if (user) redirect('/dashboard');
 
   return (
-    <main className="container">
-      <div className="card">
+    <main className="center-wrap">
+      <div className="card auth-card" style={{ maxWidth: 520 }}>
         <h1>LinkedIn Personalized Outreach</h1>
         <p className="muted">
           Sync your 1st-degree connections, enrich the ones you select, generate personalized

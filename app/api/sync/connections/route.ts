@@ -2,19 +2,22 @@ import { requireUserId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { readCookie } from '@/lib/vault';
-import { startActorRun, residentialProxy } from '@/lib/apify';
+import { getProvider, ProviderNotImplementedError } from '@/lib/providers';
 
 export const runtime = 'nodejs';
 
 /**
  * POST /api/sync/connections
  *
- * Starts the cookie-based connections actor. The li_at cookie is decrypted
- * just-in-time, handed to Apify server-side, and never returned to the client.
- * Results land in an Apify dataset (transient staging) — we store only the
- * dataset id pointer; raw connections are never persisted in our DB.
+ * Fetches the user's 1st-degree connections via the active provider
+ * (LINKEDIN_PROVIDER: 'apify' cookie-based, default; or 'linkedin-api').
  *
- * Async: we start the run and register a webhook. We never poll to completion.
+ * Apify path is ASYNC: the run is started and a webhook finalizes it; results
+ * land in a transient Apify dataset (we store only the dataset-id pointer — raw
+ * connections are never persisted in our DB).
+ *
+ * For a future SYNC provider (official API returning results inline), the
+ * results would be staged here directly — see the sync branch below.
  */
 export async function POST() {
   try {
@@ -34,33 +37,48 @@ export async function POST() {
       throw new HttpError(409, 'Session needs reconnecting before syncing.');
     }
 
-    // Just-in-time decrypt; the cookie lives only in this request's memory.
-    const liAt = await readCookie(account.li_secret_id);
+    const provider = getProvider();
 
-    const run = await startActorRun('connections', {
-      input: {
-        // Field names per the connections actor; cookie passed as a session cookie.
-        // TODO(confirm): exact input schema of APIFY_ACTOR_CONNECTIONS.
-        cookie: [{ name: 'li_at', value: liAt, domain: '.linkedin.com' }],
-        li_at: liAt,
-        proxy: residentialProxy(account.proxy_country),
-        maxResults: 5000,
-      },
-      proxyCountry: account.proxy_country,
-      webhookPayload: { userId, action: 'sync_connections', accountId: account.id },
-    });
+    // Just-in-time decrypt only if the provider needs the cookie. The cookie
+    // lives only in this request's memory and is never returned to the client.
+    const liAt = provider.requiresCookie ? await readCookie(account.li_secret_id) : '';
 
-    await svc
-      .from('linkedin_accounts')
-      .update({
-        last_sync_run_id: run.runId,
-        last_sync_dataset_id: run.defaultDatasetId,
-        last_sync_status: 'running',
-        last_sync_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId);
+    let result;
+    try {
+      result = await provider.fetchConnections({
+        userId,
+        accountId: account.id,
+        liAt,
+        proxyCountry: account.proxy_country,
+      });
+    } catch (err) {
+      if (err instanceof ProviderNotImplementedError) {
+        throw new HttpError(501, err.message);
+      }
+      throw err;
+    }
 
-    return json({ ok: true, runId: run.runId, status: 'running' });
+    if (result.mode === 'async') {
+      await svc
+        .from('linkedin_accounts')
+        .update({
+          last_sync_run_id: result.runId,
+          last_sync_dataset_id: result.datasetId,
+          last_sync_status: 'running',
+          last_sync_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId);
+      return json({ ok: true, runId: result.runId, status: 'running' });
+    }
+
+    // mode === 'sync': provider returned connections inline.
+    // TODO(confirm): when wiring the official-API provider, stage these for the
+    // Connections page (e.g. a transient staged_connections column + matching
+    // read path in GET /api/connections), respecting the data-minimization rule.
+    throw new HttpError(
+      501,
+      'Sync-mode connection staging is not implemented yet. Use LINKEDIN_PROVIDER=apify.'
+    );
   } catch (err) {
     return errorResponse(err);
   }
