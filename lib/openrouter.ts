@@ -32,8 +32,11 @@ export interface GenerateResult {
   model: string;
 }
 
-export async function generateMessage(ctx: GroundingContext): Promise<GenerateResult> {
-  const model = serverEnv.openRouterModel();
+export async function generateMessage(
+  ctx: GroundingContext,
+  modelOverride?: string | null
+): Promise<GenerateResult> {
+  const model = modelOverride?.trim() || serverEnv.openRouterModel();
 
   const userPayload = {
     recipient: {
