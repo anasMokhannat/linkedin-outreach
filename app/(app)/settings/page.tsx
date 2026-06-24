@@ -59,6 +59,17 @@ export default function SettingsPage() {
     }
   }
 
+  async function dataAction(action: string, confirmMsg: string) {
+    if (!confirm(confirmMsg)) return;
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json();
+    setMsg(res.ok ? 'Done.' : 'Failed: ' + (data.error ?? res.status));
+  }
+
   const numField = (label: string, key: keyof Profile, min = 0) => (
     <div>
       <label>{label}</label>
@@ -141,6 +152,32 @@ export default function SettingsPage() {
       <button className="btn" onClick={save} disabled={saving}>
         {saving ? 'Saving…' : 'Save settings'}
       </button>
+
+      <div className="card" style={{ marginTop: 24, borderColor: 'var(--bad)' }}>
+        <h2>Data &amp; privacy</h2>
+        <p className="muted">
+          We store only the leads you selected and their enrichment. Use these to minimize what we
+          retain.
+        </p>
+        <div className="row">
+          <button
+            className="btn secondary"
+            onClick={() =>
+              dataAction('purge_raw_enrichment', 'Strip raw enrichment payloads (keeps derived fields)?')
+            }
+          >
+            Purge raw enrichment
+          </button>
+          <button
+            className="btn danger"
+            onClick={() =>
+              dataAction('delete_all', 'Delete ALL leads, enrichment, messages, queue and logs? This cannot be undone.')
+            }
+          >
+            Delete all my data
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
