@@ -5,11 +5,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 
 const LINKS = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/connections', label: 'Connections' },
-  { href: '/leads', label: 'Leads' },
-  { href: '/messages', label: 'Messages' },
-  { href: '/settings', label: 'Settings' },
+  { href: '/dashboard', label: 'Dashboard', icon: '◧' },
+  { href: '/connections', label: 'Connections', icon: '⇄' },
+  { href: '/leads', label: 'Leads', icon: '◎' },
+  { href: '/messages', label: 'Messages', icon: '✉' },
+  { href: '/settings', label: 'Settings', icon: '⚙' },
 ];
 
 export default function Nav() {
@@ -24,16 +24,26 @@ export default function Nav() {
   }
 
   return (
-    <nav className="nav">
-      <span className="brand">LinkedIn Outreach</span>
-      {LINKS.map((l) => (
-        <Link key={l.href} href={l.href} className={pathname?.startsWith(l.href) ? 'active' : ''}>
-          {l.label}
-        </Link>
-      ))}
-      <button className="btn ghost" onClick={signOut} style={{ marginLeft: 'auto' }}>
+    <aside className="sidebar">
+      <span className="brand">
+        <span className="dot">in</span>
+        Outreach
+      </span>
+      {LINKS.map((l) => {
+        const active = pathname === l.href || pathname?.startsWith(l.href + '/');
+        return (
+          <Link key={l.href} href={l.href} className={`navlink ${active ? 'active' : ''}`}>
+            <span aria-hidden style={{ width: 18, textAlign: 'center' }}>
+              {l.icon}
+            </span>
+            {l.label}
+          </Link>
+        );
+      })}
+      <div className="spacer" />
+      <button className="btn ghost" onClick={signOut}>
         Sign out
       </button>
-    </nav>
+    </aside>
   );
 }

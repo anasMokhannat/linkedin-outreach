@@ -27,6 +27,23 @@ enforced **at send time**, so the queue never exceeds it.
 `draft → approved → queued → sent` (or `failed`); `draft/approved → rejected`. The
 `approved → queued` transition happens **only** on the explicit Send click.
 
+## LinkedIn provider abstraction
+
+Connection-fetch and DM-send go through a swappable provider (`lib/providers/`),
+selected by the `LINKEDIN_PROVIDER` env var:
+
+- **`apify`** (default) — cookie-based Apify actors. Fully implemented. Async:
+  runs start and a webhook finalizes them.
+- **`linkedin-api`** — official LinkedIn API. **Stubbed**: it throws a clear
+  `ProviderNotImplementedError` because listing connections and sending member
+  DMs are **not available to standard apps** — they require LinkedIn Partner
+  Program access (Sales Navigator / Marketing Developer Platform). Implement
+  `LinkedInApiProvider.fetchConnections` / `.sendMessage` against your granted
+  endpoints once that access is confirmed. The interface already supports a
+  synchronous (inline REST) execution model for this case.
+
+Everything else (Vault, caps, gates, cron, RLS) is provider-agnostic.
+
 ## Security model (non-negotiable)
 
 - The `li_at` session cookie is the most sensitive asset. It is encrypted into
@@ -134,8 +151,15 @@ POST   /api/data                   retention: purge raw enrichment / delete all
 
 1. Import the GitHub repo (Next.js auto-detected).
 2. Add every variable from `.env.example` in Project Settings → Environment Variables.
-3. `vercel.json` registers the cron `*/15 * * * *` → `/api/cron/process-queue`. Vercel
-   sends `Authorization: Bearer $CRON_SECRET` automatically.
+3. `vercel.json` registers a **daily** cron `0 8 * * *` → `/api/cron/process-queue`
+   (Vercel **Hobby/free** plan only allows once-per-day crons; sub-daily schedules
+   need Pro). Vercel sends `Authorization: Bearer $CRON_SECRET` automatically.
+   - **Tradeoff:** a daily run processes the queue once (up to the cap), so it loses
+     intraday pacing. For tighter ~15-min pacing on the free tier, trigger the same
+     endpoint externally — e.g. GitHub Actions, cron-job.org, or Supabase `pg_cron`
+     + `pg_net` — passing `Authorization: Bearer $CRON_SECRET`. Redundant triggers
+     are safe (items are claimed atomically and cap-limited). On Pro, change the
+     schedule back to `*/15 * * * *`.
 4. Point Apify run webhooks at `https://<your-app>/api/webhooks/apify`.
 5. Add the production redirect URL to the Supabase LinkedIn provider.
 6. Publish the extension and add your production origin to its `host_permissions`.
