@@ -41,6 +41,12 @@ export default async function DashboardPage() {
     : DEFAULT_CAP_CONFIG;
   const caps = capStatus(ageDays, usage?.dms_sent ?? 0, cfg);
 
+  const { data: events } = await supabase
+    .from('send_log')
+    .select('id, event, created_at')
+    .order('created_at', { ascending: false })
+    .limit(12);
+
   const statusBadge =
     account?.status === 'connected'
       ? 'good'
@@ -112,6 +118,30 @@ export default async function DashboardPage() {
             <Link href="/messages">Generate</Link> drafts → approve → send one at a time.
           </li>
         </ol>
+      </div>
+
+      <div className="card">
+        <h2>Recent activity</h2>
+        {events && events.length > 0 ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id}>
+                  <td>{e.event}</td>
+                  <td className="muted">{new Date(e.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="muted">No activity yet.</p>
+        )}
       </div>
     </div>
   );
