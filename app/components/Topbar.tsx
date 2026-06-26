@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Logo from './Logo';
 
 export default function Topbar() {
   const router = useRouter();
@@ -13,19 +14,14 @@ export default function Topbar() {
 
   return (
     <header className="topbar">
-      <span className="logo">
-        <span className="mark">in</span>
-        Outreach
+      <span className="brand">
+        <Logo height={24} />
       </span>
-      <div className="search">
-        <input placeholder="Search leads…" disabled />
-      </div>
       <div className="right">
-        <span className="pill">LinkedIn connected</span>
+        <span className="badge good">LinkedIn connected</span>
         <button className="btn ghost sm" onClick={signOut}>
           Sign out
         </button>
-        <span className="avatar">me</span>
       </div>
     </header>
   );

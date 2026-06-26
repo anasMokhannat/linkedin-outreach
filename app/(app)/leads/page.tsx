@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { IconSync, IconSparkle } from '@/app/components/icons';
 
 interface Lead {
   id: string;
@@ -33,6 +34,7 @@ interface Msg {
   status: string;
   sent_at: string | null;
   created_at: string;
+  campaignName?: string | null;
 }
 
 function name(l: { first_name: string | null; last_name: string | null }) {
@@ -57,6 +59,7 @@ export default function LeadsPage() {
 
   // Modals
   const [msgsModal, setMsgsModal] = useState<{ lead: Lead; items: Msg[] } | null>(null);
+  const [editingMsg, setEditingMsg] = useState<Record<string, string>>({});
   const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null } | null>(null);
 
   const loadLeads = useCallback(async () => {
@@ -161,16 +164,23 @@ export default function LeadsPage() {
     loadLeads();
   }
 
-  async function patchMsg(lead: Lead, id: string, action: string) {
+  async function patchMsg(lead: Lead, id: string, action: string, body?: string) {
     const res = await fetch(`/api/messages/${id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, body }),
     });
     if (!res.ok) {
       const d = await res.json();
       setMsg(`${action} failed: ${d.error ?? res.status}`);
-    } else refreshMessages(lead);
+    } else {
+      setEditingMsg((p) => {
+        const n = { ...p };
+        delete n[id];
+        return n;
+      });
+      refreshMessages(lead);
+    }
   }
 
   async function sendMsg(lead: Lead, id: string) {
@@ -210,14 +220,14 @@ export default function LeadsPage() {
 
   return (
     <div>
-      <div className="hero">
+      <div className="page-header">
         <div>
           <h1>Leads</h1>
           <div className="sub">Your 1st-degree connections, enriched and contacted</div>
         </div>
         <div className="spacer" />
         <button className="btn" onClick={sync} disabled={busy.sync}>
-          {busy.sync ? 'Syncing…' : '⇄ Sync connections'}
+          <IconSync /> {busy.sync ? 'Syncing…' : 'Sync connections'}
         </button>
       </div>
 
@@ -301,7 +311,7 @@ export default function LeadsPage() {
                     <div className="row" style={{ gap: 6 }}>
                       <button className="btn secondary sm" onClick={() => enrich(l.id)} disabled={busy[l.id]}>Enrich</button>
                       {l.enriched_at && <button className="btn secondary sm" onClick={() => openProfile(l)}>Profile</button>}
-                      <button className="btn sm" onClick={() => generate(l.id)} disabled={busy[l.id]}>Generate</button>
+                      <button className="btn sm" onClick={() => generate(l.id)} disabled={busy[l.id]}><IconSparkle width={14} height={14} /> Generate</button>
                       <button className="btn ghost sm" onClick={() => removeLead(l.id)}>✕</button>
                     </div>
                   </td>
@@ -327,15 +337,43 @@ export default function LeadsPage() {
             {msgsModal.items.map((m) => (
               <div key={m.id} className="card" style={{ boxShadow: 'none', marginTop: 12 }}>
                 <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span className={`badge ${badge(m.status)}`}>{m.status}</span>
-                  <span className="muted" style={{ fontSize: 12 }}>{new Date(m.created_at).toLocaleString()}</span>
+                  <span className="row" style={{ gap: 8 }}>
+                    <span className={`badge ${badge(m.status)}`}>{m.status}</span>
+                    {m.campaignName && <span className="badge plain">◆ {m.campaignName}</span>}
+                  </span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {m.sent_at ? `sent ${new Date(m.sent_at).toLocaleString()}` : new Date(m.created_at).toLocaleString()}
+                  </span>
                 </div>
-                <p style={{ whiteSpace: 'pre-wrap', marginBottom: 8 }}>{m.body}</p>
-                <div className="row" style={{ gap: 6 }}>
-                  {m.status === 'draft' && <button className="btn sm" onClick={() => patchMsg(msgsModal.lead, m.id, 'approve')}>Approve</button>}
-                  {m.status === 'approved' && <button className="btn sm" onClick={() => sendMsg(msgsModal.lead, m.id)}>Send</button>}
-                  {['draft', 'approved'].includes(m.status) && <button className="btn ghost sm" onClick={() => patchMsg(msgsModal.lead, m.id, 'reject')}>Reject</button>}
-                </div>
+                {m.id in editingMsg ? (
+                  <>
+                    <textarea
+                      rows={5}
+                      value={editingMsg[m.id]}
+                      onChange={(e) => setEditingMsg((p) => ({ ...p, [m.id]: e.target.value }))}
+                      style={{ margin: '8px 0' }}
+                    />
+                    <div className="row" style={{ gap: 6, justifyContent: 'space-between' }}>
+                      <span className="muted" style={{ fontSize: 12 }}>{editingMsg[m.id].length} chars · saving sets it back to draft</span>
+                      <div className="row" style={{ gap: 6 }}>
+                        <button className="btn ghost sm" onClick={() => setEditingMsg((p) => { const n = { ...p }; delete n[m.id]; return n; })}>Cancel</button>
+                        <button className="btn sm" disabled={!editingMsg[m.id].trim()} onClick={() => patchMsg(msgsModal.lead, m.id, 'edit', editingMsg[m.id].trim())}>Save</button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ whiteSpace: 'pre-wrap', marginBottom: 8 }}>{m.body}</p>
+                    <div className="row" style={{ gap: 6 }}>
+                      {['draft', 'approved'].includes(m.status) && (
+                        <button className="btn secondary sm" onClick={() => setEditingMsg((p) => ({ ...p, [m.id]: m.body }))}>Edit</button>
+                      )}
+                      {m.status === 'draft' && <button className="btn sm" onClick={() => patchMsg(msgsModal.lead, m.id, 'approve')}>Approve</button>}
+                      {m.status === 'approved' && <button className="btn sm" onClick={() => sendMsg(msgsModal.lead, m.id)}>Send</button>}
+                      {['draft', 'approved'].includes(m.status) && <button className="btn ghost sm" onClick={() => patchMsg(msgsModal.lead, m.id, 'reject')}>Reject</button>}
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>

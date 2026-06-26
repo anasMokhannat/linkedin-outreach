@@ -1,7 +1,7 @@
 import { requireAccountId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
-import { capStatus } from '@/lib/caps';
+import { getUsage } from '@/lib/limits';
 import { unipileSendNewMessage, isUnipileAuthError } from '@/lib/unipile';
 import { log } from '@/lib/log';
 
@@ -27,7 +27,7 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
 
     const { data: account } = await svc
       .from('linkedin_accounts')
-      .select('status, unipile_account_id, dms_per_day')
+      .select('status, unipile_account_id')
       .eq('id', accountId)
       .maybeSingle();
     if (!account?.unipile_account_id) throw new HttpError(400, 'No LinkedIn account connected.');
@@ -36,16 +36,10 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     const recipientId = (message.leads as { provider_member_id?: string } | null)?.provider_member_id;
     if (!recipientId) throw new HttpError(422, 'This lead has no messaging id — re-sync your connections.');
 
-    // Daily cap.
+    // App-defined daily + weekly limits (not user-configurable).
     const today = new Date().toISOString().slice(0, 10);
-    const { data: usage } = await svc
-      .from('daily_usage')
-      .select('dms_sent')
-      .eq('account_id', accountId)
-      .eq('day', today)
-      .maybeSingle();
-    const caps = capStatus(usage?.dms_sent ?? 0, account.dms_per_day ?? 25);
-    if (caps.reached) throw new HttpError(429, 'Daily limit reached — continue tomorrow.');
+    const usage = await getUsage(accountId);
+    if (usage.allowedNow <= 0) throw new HttpError(429, 'Sending limit reached — continue later.');
 
     log.info('send', 'sending', { accountId, messageId: params.id });
     try {

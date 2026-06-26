@@ -17,10 +17,9 @@ function optional(name: string, fallback = ''): string {
   return process.env[name] ?? fallback;
 }
 
-// --- Public (safe to expose to the browser) ---
+// --- Public ---
 export const publicEnv = {
   supabaseUrl: () => required('NEXT_PUBLIC_SUPABASE_URL'),
-  supabaseAnonKey: () => required('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
   appBaseUrl: () => optional('APP_BASE_URL', 'http://localhost:3000'),
 };
 
