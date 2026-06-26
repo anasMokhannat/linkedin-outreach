@@ -3,8 +3,8 @@
  * importing this module from a client component never crashes the build — the
  * getters throw only when a secret is actually used server-side.
  *
- * NEVER reference SUPABASE_SERVICE_ROLE_KEY, COOKIE_ENC_KEY, APIFY_TOKEN,
- * OPENROUTER_API_KEY, CRON_SECRET, or APIFY_WEBHOOK_SECRET from client code.
+ * NEVER reference SUPABASE_SERVICE_ROLE_KEY, UNIPILE_API_KEY, or OPENROUTER_API_KEY
+ * from client code.
  */
 
 function required(name: string): string {
@@ -27,25 +27,12 @@ export const publicEnv = {
 // --- Server-only ---
 export const serverEnv = {
   supabaseServiceRoleKey: () => required('SUPABASE_SERVICE_ROLE_KEY'),
-  cookieEncKey: () => required('COOKIE_ENC_KEY'),
 
-  // Which LinkedIn provider powers connection-fetch + DM-send: 'apify' (default,
-  // cookie-based) or 'linkedin-api' (official API; partner-gated, stubbed).
-  linkedinProvider: () => optional('LINKEDIN_PROVIDER', 'apify'),
-
-  apifyToken: () => required('APIFY_TOKEN'),
-  apifyWebhookSecret: () => required('APIFY_WEBHOOK_SECRET'),
-
-  // Actor IDs are CONFIG, never hardcoded constants (spec §5, hard rules).
-  actorConnections: () => required('APIFY_ACTOR_CONNECTIONS'),
-  actorProfile: () => required('APIFY_ACTOR_PROFILE'),
-  actorPosts: () => required('APIFY_ACTOR_POSTS'),
-  actorCompany: () => optional('APIFY_ACTOR_COMPANY'),
-  actorSendDm: () => required('APIFY_ACTOR_SEND_DM'),
+  // Unipile (managed LinkedIn API). DSN is the full base URL from the Unipile
+  // dashboard, e.g. https://api8.unipile.com:13443 (scheme optional).
+  unipileDsn: () => required('UNIPILE_DSN'),
+  unipileApiKey: () => required('UNIPILE_API_KEY'),
 
   openRouterApiKey: () => required('OPENROUTER_API_KEY'),
   openRouterModel: () => optional('OPENROUTER_MODEL', 'openai/gpt-4o-mini'),
-
-  cronSecret: () => required('CRON_SECRET'),
-  qstashToken: () => optional('QSTASH_TOKEN'),
 };

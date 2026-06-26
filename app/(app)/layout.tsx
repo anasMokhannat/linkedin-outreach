@@ -1,21 +1,24 @@
 import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import Nav from '@/app/components/Nav';
-import { getSessionUser } from '@/lib/auth';
+import Topbar from '@/app/components/Topbar';
+import { getAccountId } from '@/lib/auth';
 
 /**
- * Layout for all authenticated app pages (dashboard, connections, leads,
- * messages, settings). Sidebar + full-width main content area. Middleware
- * already redirects unauthenticated users; this is a defense-in-depth check.
+ * Authenticated shell. Identity = connected LinkedIn account; if there's no
+ * valid session cookie, send the visitor to the connect page (/).
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const user = await getSessionUser();
-  if (!user) redirect('/login');
+  const accountId = await getAccountId();
+  if (!accountId) redirect('/');
 
   return (
-    <div className="app-shell">
-      <Nav />
-      <main className="app-main">{children}</main>
-    </div>
+    <>
+      <Topbar />
+      <div className="shell">
+        <Nav />
+        <main className="app-main">{children}</main>
+      </div>
+    </>
   );
 }

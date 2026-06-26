@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server';
-import { requireUserId, HttpError } from '@/lib/auth';
+import { requireAccountId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
-import { createSupabaseServerClient } from '@/lib/supabase-server';
+import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { MESSAGE_HARD_CAP } from '@/lib/openrouter';
 import type { MessageStatus } from '@/lib/types';
 
@@ -9,27 +9,19 @@ export const runtime = 'nodejs';
 
 /**
  * PATCH /api/messages/:id  { action: 'edit'|'approve'|'reject', body? } — Gate 2.
- *
- * Enforces the message state machine. Crucially, NOTHING here queues a send:
- * approval only moves draft → approved. The approved → queued transition lives
- * solely in the explicit per-message Send route (Gate 3).
- *
- * - edit:    body update; resets to 'draft' and requires re-approval; marks
- *            edited_by_user. Allowed from draft/approved only.
- * - approve: draft → approved (sets approved_at).
- * - reject:  draft/approved → rejected.
+ * Enforces the state machine; sending never happens here (only on /send).
  */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    await requireUserId();
-    const id = params.id;
+    const accountId = await requireAccountId();
     const body = (await req.json().catch(() => ({}))) as { action?: string; body?: string };
 
-    const supabase = createSupabaseServerClient();
-    const { data: msg } = await supabase
+    const svc = createSupabaseServiceClient();
+    const { data: msg } = await svc
       .from('messages')
       .select('id, status')
-      .eq('id', id)
+      .eq('id', params.id)
+      .eq('account_id', accountId)
       .maybeSingle();
     if (!msg) throw new HttpError(404, 'Message not found.');
 
@@ -48,37 +40,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         }
         update.body = newBody;
         update.edited_by_user = true;
-        update.status = 'draft'; // editing requires re-approval
+        update.status = 'draft';
         update.approved_at = null;
         break;
       }
-      case 'approve': {
-        if (status !== 'draft') {
-          throw new HttpError(409, `Only drafts can be approved (was "${status}").`);
-        }
+      case 'approve':
+        if (status !== 'draft') throw new HttpError(409, `Only drafts can be approved (was "${status}").`);
         update.status = 'approved';
         update.approved_at = new Date().toISOString();
         break;
-      }
-      case 'reject': {
+      case 'reject':
         if (!['draft', 'approved'].includes(status)) {
           throw new HttpError(409, `Cannot reject a message in status "${status}".`);
         }
         update.status = 'rejected';
         break;
-      }
       default:
         throw new HttpError(400, 'Unknown action.');
     }
 
-    const { data: updated, error } = await supabase
+    const { data: updated, error } = await svc
       .from('messages')
       .update(update)
-      .eq('id', id)
+      .eq('id', params.id)
+      .eq('account_id', accountId)
       .select('*')
       .single();
     if (error) throw new Error(error.message);
-
     return json({ ok: true, message: updated });
   } catch (err) {
     return errorResponse(err);

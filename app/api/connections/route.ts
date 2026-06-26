@@ -1,84 +1,53 @@
 import { type NextRequest } from 'next/server';
-import { requireUserId } from '@/lib/auth';
+import { requireAccountId } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
-import { getDatasetItems } from '@/lib/apify';
-import { normalizeConnection } from '@/lib/normalize';
 import type { StagedConnection } from '@/lib/types';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/connections?q=&company=&role=
- *
- * Reads the staged connections from the latest sync's Apify dataset (transient)
- * and applies the Tier-1 filter (name, company/role from headline). Raw
- * connections are never stored in our DB — this reads straight from Apify.
+ * GET /api/connections?q=&company=&role= — staged connections (from the latest
+ * sync) with Tier-1 filtering. Account-scoped; marks which are already leads.
  */
 export async function GET(req: NextRequest) {
   try {
-    const userId = await requireUserId();
+    const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
 
     const { data: account } = await svc
       .from('linkedin_accounts')
-      .select('last_sync_dataset_id, last_sync_status')
-      .eq('user_id', userId)
+      .select('last_sync_status, staged_connections')
+      .eq('id', accountId)
       .maybeSingle();
 
-    if (!account?.last_sync_dataset_id) {
+    if (!account || !Array.isArray(account.staged_connections)) {
       return json({ status: account?.last_sync_status ?? 'none', connections: [] });
     }
-    if (account.last_sync_status === 'running') {
-      return json({ status: 'running', connections: [] });
-    }
-    if (account.last_sync_status === 'failed') {
-      return json({ status: 'failed', connections: [] });
-    }
 
-    const items = await getDatasetItems<Record<string, unknown>>(account.last_sync_dataset_id);
-    let connections: StagedConnection[] = items
-      .map(normalizeConnection)
-      .filter((c): c is StagedConnection => c !== null);
-
-    // Tier-1 filter (instant; no enrichment needed).
+    let connections = account.staged_connections as StagedConnection[];
     const url = new URL(req.url);
     const q = url.searchParams.get('q')?.toLowerCase().trim();
     const company = url.searchParams.get('company')?.toLowerCase().trim();
     const role = url.searchParams.get('role')?.toLowerCase().trim();
-
-    if (q) {
-      connections = connections.filter((c) => c.fullName.toLowerCase().includes(q));
-    }
-    if (company) {
+    if (q) connections = connections.filter((c) => c.fullName.toLowerCase().includes(q));
+    if (company)
       connections = connections.filter(
-        (c) =>
-          (c.company ?? '').toLowerCase().includes(company) ||
-          (c.headline ?? '').toLowerCase().includes(company)
+        (c) => (c.company ?? '').toLowerCase().includes(company) || (c.headline ?? '').toLowerCase().includes(company)
       );
-    }
-    if (role) {
+    if (role)
       connections = connections.filter(
-        (c) =>
-          (c.title ?? '').toLowerCase().includes(role) ||
-          (c.headline ?? '').toLowerCase().includes(role)
+        (c) => (c.title ?? '').toLowerCase().includes(role) || (c.headline ?? '').toLowerCase().includes(role)
       );
-    }
 
-    // Mark which staged connections are already persisted as leads.
-    const { data: existingLeads } = await svc
-      .from('leads')
-      .select('profile_url')
-      .eq('user_id', userId);
-    const persisted = new Set((existingLeads ?? []).map((l) => l.profile_url));
+    const { data: existing } = await svc.from('leads').select('profile_url').eq('account_id', accountId);
+    const persisted = new Set((existing ?? []).map((l) => l.profile_url));
 
     return json({
-      status: 'succeeded',
+      status: account.last_sync_status ?? 'succeeded',
       total: connections.length,
-      connections: connections.slice(0, 1000).map((c) => ({
-        ...c,
-        alreadyLead: persisted.has(c.profileUrl),
-      })),
+      connections: connections.slice(0, 1000).map((c) => ({ ...c, alreadyLead: persisted.has(c.profileUrl) })),
     });
   } catch (err) {
     return errorResponse(err);

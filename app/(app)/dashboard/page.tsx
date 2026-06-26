@@ -1,147 +1,93 @@
 import Link from 'next/link';
-import { createSupabaseServerClient } from '@/lib/supabase-server';
-import { getSessionUser } from '@/lib/auth';
-import { capStatus, DEFAULT_CAP_CONFIG } from '@/lib/caps';
+import { requireAccountId } from '@/lib/auth';
+import { createSupabaseServiceClient } from '@/lib/supabase-server';
+import { capStatus, DEFAULT_DMS_PER_DAY } from '@/lib/caps';
 
 export const dynamic = 'force-dynamic';
 
-export default async function DashboardPage() {
-  const user = await getSessionUser();
-  const supabase = createSupabaseServerClient();
+export default async function OverviewPage() {
+  const accountId = await requireAccountId();
+  const svc = createSupabaseServiceClient();
 
-  const [{ data: account }, { data: profile }] = await Promise.all([
-    supabase.from('linkedin_accounts').select('*').maybeSingle(),
-    supabase.from('users').select('*').maybeSingle(),
-  ]);
+  const { data: account } = await svc
+    .from('linkedin_accounts')
+    .select('status, dms_per_day, leads_to_message, last_sync_at')
+    .eq('id', accountId)
+    .maybeSingle();
 
   const today = new Date().toISOString().slice(0, 10);
-  const { data: usage } = await supabase
+  const { data: usage } = await svc
     .from('daily_usage')
     .select('dms_sent')
+    .eq('account_id', accountId)
     .eq('day', today)
     .maybeSingle();
 
-  const [{ count: leadCount }, { count: draftCount }, { count: queuedCount }, { count: sentCount }] =
-    await Promise.all([
-      supabase.from('leads').select('id', { count: 'exact', head: true }),
-      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
-      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'queued'),
-      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
-    ]);
+  const [{ count: leads }, { count: sent }, { count: drafts }] = await Promise.all([
+    svc.from('leads').select('id', { count: 'exact', head: true }).eq('account_id', accountId),
+    svc.from('messages').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'sent'),
+    svc.from('messages').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'draft'),
+  ]);
 
-  const ageDays = account?.last_validated
-    ? Math.floor((Date.now() - new Date(account.created_at).getTime()) / 86_400_000)
-    : 0;
-  const cfg = profile
-    ? {
-        startCap: profile.dms_start_cap ?? DEFAULT_CAP_CONFIG.startCap,
-        maxCap: profile.dms_max_cap ?? DEFAULT_CAP_CONFIG.maxCap,
-        rampPerWeek: profile.ramp_per_week ?? DEFAULT_CAP_CONFIG.rampPerWeek,
-      }
-    : DEFAULT_CAP_CONFIG;
-  const caps = capStatus(ageDays, usage?.dms_sent ?? 0, cfg);
-
-  const { data: events } = await supabase
-    .from('send_log')
-    .select('id, event, created_at')
-    .order('created_at', { ascending: false })
-    .limit(12);
-
-  const statusBadge =
-    account?.status === 'connected'
-      ? 'good'
-      : account?.status === 'needs_reauth'
-        ? 'warn'
-        : 'bad';
+  const caps = capStatus(usage?.dms_sent ?? 0, account?.dms_per_day ?? DEFAULT_DMS_PER_DAY);
+  const reauth = account?.status === 'needs_reauth';
 
   return (
     <div>
-      <h1>Dashboard</h1>
-      <p className="muted">Signed in as {user?.email}</p>
+      <div className="hero">
+        <div>
+          <h1>Overview</h1>
+          <div className="sub">Track your LinkedIn outreach & performance</div>
+        </div>
+        <div className="spacer" />
+        <Link className="btn" href="/leads">
+          + Find leads
+        </Link>
+      </div>
 
-      {!account && (
-        <div className="notice warn" style={{ marginBottom: 16 }}>
-          You haven&apos;t connected a LinkedIn session yet.{' '}
-          <Link href="/connections">Connect now →</Link>
+      {reauth && (
+        <div className="notice warn">
+          Your LinkedIn session needs reconnecting. <Link href="/">Reconnect →</Link>
         </div>
       )}
 
-      {account?.status === 'needs_reauth' && (
-        <div className="notice warn" style={{ marginBottom: 16 }}>
-          Your LinkedIn session expired. Delivery is paused.{' '}
-          <Link href="/connections">Reconnect →</Link>
+      <div className="grid cols-3" style={{ marginBottom: 18 }}>
+        <div className="stat-card">
+          <div className="stat-icon">◎</div>
+          <div className="stat-num">{leads ?? 0}</div>
+          <div className="stat-label">Leads</div>
+          <div className="stat-sub">saved to your list</div>
         </div>
-      )}
-
-      <div className="grid cols-3">
-        <div className="card">
-          <h2>Session</h2>
-          <span className={`badge ${statusBadge}`}>{account?.status ?? 'not connected'}</span>
-          <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-            {account?.last_validated
-              ? `Validated ${new Date(account.last_validated).toLocaleString()}`
-              : 'No validation yet'}
-          </p>
-        </div>
-        <div className="card">
-          <h2>Today&apos;s cap</h2>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>
-            {caps.sent} / {caps.cap}
+        <div className="stat-card">
+          <div className="stat-icon green">✈</div>
+          <div className="stat-num">
+            {caps.sent} <span style={{ fontSize: 18, color: 'var(--muted)' }}>/ {caps.cap}</span>
           </div>
-          <p className="muted" style={{ fontSize: 13 }}>
-            {caps.reached ? 'Daily limit reached' : `${caps.remaining} sends remaining`}
-          </p>
+          <div className="stat-label">Sent today</div>
+          <div className="stat-sub">{caps.reached ? 'daily limit reached' : `${caps.remaining} remaining`}</div>
         </div>
-        <div className="card">
-          <h2>Pipeline</h2>
-          <div className="muted" style={{ fontSize: 14 }}>
-            Leads: <strong>{leadCount ?? 0}</strong>
-            <br />
-            Drafts: <strong>{draftCount ?? 0}</strong> · Queued: <strong>{queuedCount ?? 0}</strong>
-            <br />
-            Sent: <strong>{sentCount ?? 0}</strong>
-          </div>
+        <div className="stat-card">
+          <div className="stat-icon">✉</div>
+          <div className="stat-num">{sent ?? 0}</div>
+          <div className="stat-label">Total sent</div>
+          <div className="stat-sub">{drafts ?? 0} drafts waiting</div>
         </div>
       </div>
 
       <div className="card">
-        <h2>Workflow</h2>
-        <ol className="muted">
+        <h2>Getting started</h2>
+        <ol className="muted" style={{ margin: 0, paddingLeft: 18 }}>
           <li>
-            <Link href="/connections">Connect</Link> your session and sync connections.
+            <Link href="/leads">Sync your connections</Link> and add the people you want to reach.
           </li>
-          <li>Filter (Tier-1) and select leads to persist.</li>
-          <li>
-            <Link href="/leads">Enrich</Link> selected leads and apply Tier-2 filters.
-          </li>
-          <li>
-            <Link href="/messages">Generate</Link> drafts → approve → send one at a time.
-          </li>
+          <li>Enrich a lead to pull their role, experience & recent posts.</li>
+          <li>Generate a message, approve it, and send — one at a time.</li>
         </ol>
-      </div>
-
-      <div className="card">
-        <h2>Recent activity</h2>
-        {events && events.length > 0 ? (
-          <table>
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((e) => (
-                <tr key={e.id}>
-                  <td>{e.event}</td>
-                  <td className="muted">{new Date(e.created_at).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="muted">No activity yet.</p>
-        )}
+        <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+          Daily cap: <strong>{account?.dms_per_day ?? DEFAULT_DMS_PER_DAY}</strong> messages ·
+          target: <strong>{account?.leads_to_message ?? 0}</strong> leads.{' '}
+          <Link href="/settings">Change →</Link>
+        </p>
       </div>
     </div>
   );

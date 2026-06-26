@@ -1,52 +1,37 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
 
 /**
- * Refreshes the Supabase auth session on every request and gates app routes.
- * Unauthenticated users hitting protected pages are redirected to /login.
- * API routes do their own auth and are excluded from the redirect.
+ * Route guard based on the session cookie (presence check only — full HMAC
+ * verification happens server-side in the (app) layout / route handlers via
+ * getAccountId). Identity is the connected LinkedIn account; there is no
+ * separate user auth.
  */
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
+const SESSION_COOKIE = 'fl_session';
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isProtected = ['/dashboard', '/connections', '/leads', '/messages', '/settings'].some(
+  const hasSession = !!request.cookies.get(SESSION_COOKIE)?.value;
+
+  const isProtected = ['/dashboard', '/leads', '/settings'].some(
     (p) => pathname === p || pathname.startsWith(p + '/')
   );
 
-  if (isProtected && !user) {
+  if (isProtected && !hasSession) {
     const url = request.nextUrl.clone();
-    url.pathname = '/login';
+    url.pathname = '/';
     return NextResponse.redirect(url);
   }
 
-  return response;
+  // Already connected → skip the connect landing.
+  if (pathname === '/' && hasSession) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/dashboard';
+    return NextResponse.redirect(url);
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {
-  // Run on app pages; skip static assets and the auth callback / api routes.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api|auth).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api).*)'],
 };
