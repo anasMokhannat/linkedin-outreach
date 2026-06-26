@@ -22,7 +22,8 @@ export async function POST(req: NextRequest) {
         ? body.country.trim().toUpperCase().slice(0, 2)
         : null;
     if (!accountId) throw new HttpError(400, 'accountId required.');
-    return await finalizeConnection(accountId, country);
+    // Tolerate a transient 404 while the user is still approving on their phone.
+    return await finalizeConnection(accountId, country, { tolerateGone: true });
   } catch (err) {
     return errorResponse(err);
   }

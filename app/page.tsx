@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Logo from './components/Logo';
 
-type Mode = 'password' | 'cookie';
+// Cookie connect is hidden from the UI (backend route /api/linkedin/connect is kept).
+// type Mode = 'password' | 'cookie';
 type Phase = 'form' | 'code' | 'awaiting';
 
 interface ConnectResult {
@@ -19,12 +21,11 @@ function isInApp(type?: string) {
 
 export default function ConnectPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>('password');
+  // const [mode, setMode] = useState<Mode>('password'); // cookie connect hidden from UI
   const [phase, setPhase] = useState<Phase>('form');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [country, setCountry] = useState('');
-  const [liAt, setLiAt] = useState('');
+  // const [liAt, setLiAt] = useState(''); // cookie connect hidden from UI
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [accountId, setAccountId] = useState('');
@@ -86,7 +87,7 @@ export default function ConnectPage() {
       if (inFlight) return;
       inFlight = true;
       try {
-        const data = await post('/api/linkedin/poll', { accountId, country: country.trim() || undefined });
+        const data = await post('/api/linkedin/poll', { accountId });
         if (data?.status === 'connected') {
           clearInterval(iv);
           polling.current = false;
@@ -106,56 +107,42 @@ export default function ConnectPage() {
   return (
     <main className="center-wrap">
       <div className="card auth-card">
-        <div className="row" style={{ gap: 10, marginBottom: 6 }}>
-          <span style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg,var(--accent),#1f7fc6)', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800 }}>in</span>
-          <h1 style={{ fontSize: 22 }}>Connect LinkedIn</h1>
-        </div>
-        <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>
-          Sign in by connecting your LinkedIn account. Login runs securely through Unipile — your
-          password is used once to connect and never stored.
+        <Logo height={28} />
+        <h1 style={{ fontSize: 21, marginTop: 16 }}>Connect your LinkedIn</h1>
+        <p className="muted" style={{ marginTop: 4, fontSize: 14 }}>
+          Sign in by connecting your LinkedIn account. Login runs securely — your password is used
+          once to connect and never stored.
         </p>
 
         {err && <div className="notice bad" style={{ marginTop: 12 }}>{err}</div>}
 
         {phase === 'form' && (
           <>
+            {/* Cookie/email mode toggle hidden — only email & password is shown.
             <div className="row" style={{ gap: 8, margin: '14px 0 4px' }}>
-              <button className={`btn sm ${mode === 'password' ? '' : 'secondary'}`} onClick={() => setMode('password')}>Email &amp; password</button>
-              <button className={`btn sm ${mode === 'cookie' ? '' : 'secondary'}`} onClick={() => setMode('cookie')}>Cookie</button>
+              <button className="btn sm" onClick={() => setMode('password')}>Email &amp; password</button>
+              <button className="btn sm secondary" onClick={() => setMode('cookie')}>Cookie</button>
             </div>
+            */}
 
-            {mode === 'password' ? (
-              <>
-                <label>LinkedIn email</label>
-                <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="you@example.com" autoComplete="off" />
-                <label>Password</label>
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
-                <label>Country (2-letter, recommended)</label>
-                <input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="FR" />
-                <button className="btn" style={{ marginTop: 16, width: '100%' }} disabled={busy || !username.trim() || !password}
-                  onClick={() => action('/api/linkedin/connect-credentials', { username: username.trim(), password, country: country.trim() || undefined })}>
-                  {busy ? 'Connecting…' : 'Connect'}
-                </button>
-              </>
-            ) : (
-              <>
-                <label>li_at cookie</label>
-                <input type="password" value={liAt} onChange={(e) => setLiAt(e.target.value)} placeholder="AQED…" autoComplete="off" />
-                <label>Country (2-letter, recommended)</label>
-                <input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="FR" />
-                <button className="btn" style={{ marginTop: 16, width: '100%' }} disabled={busy || liAt.trim().length < 20}
-                  onClick={() => action('/api/linkedin/connect', { liAt: liAt.trim(), proxyCountry: country.trim() || undefined })}>
-                  {busy ? 'Connecting…' : 'Connect with cookie'}
-                </button>
-              </>
-            )}
+            <label>LinkedIn email</label>
+            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="you@example.com" autoComplete="off" />
+            <label>Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+            <button className="btn" style={{ marginTop: 16, width: '100%' }} disabled={busy || !username.trim() || !password}
+              onClick={() => action('/api/linkedin/connect-credentials', { username: username.trim(), password })}>
+              {busy ? 'Connecting…' : 'Connect'}
+            </button>
 
-            <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-              Already connected on the Unipile dashboard?{' '}
-              <button onClick={() => action('/api/linkedin/link', {})} disabled={busy} style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, font: 'inherit', textDecoration: 'underline' }}>
-                Link my account
-              </button>
-            </p>
+            {/* Cookie connect form hidden (backend /api/linkedin/connect kept). To re-enable,
+                restore the Mode type + `mode`/`liAt` state and this block:
+            <label>li_at cookie</label>
+            <input type="password" value={liAt} onChange={(e) => setLiAt(e.target.value)} placeholder="AQED…" autoComplete="off" />
+            <button className="btn" style={{ marginTop: 16, width: '100%' }} disabled={busy || liAt.trim().length < 20}
+              onClick={() => action('/api/linkedin/connect', { liAt: liAt.trim() })}>
+              {busy ? 'Connecting…' : 'Connect with cookie'}
+            </button>
+            */}
           </>
         )}
 
@@ -164,7 +151,7 @@ export default function ConnectPage() {
             <label style={{ marginTop: 14 }}>Verification code ({checkpointType || 'code'})</label>
             <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" autoComplete="one-time-code" />
             <button className="btn" style={{ marginTop: 14, width: '100%' }} disabled={busy || !code.trim()}
-              onClick={() => action('/api/linkedin/checkpoint', { accountId, code: code.trim(), country: country.trim() || undefined })}>
+              onClick={() => action('/api/linkedin/checkpoint', { accountId, code: code.trim() })}>
               {busy ? 'Verifying…' : 'Submit code'}
             </button>
             <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>

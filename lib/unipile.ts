@@ -312,6 +312,8 @@ export async function unipileGetProfile(
 ): Promise<UnipileProfile> {
   const url = new URL(`${base()}/api/v1/users/${encodeURIComponent(identifier)}`);
   url.searchParams.set('account_id', accountId);
+  // Required to include experience / education / skills sections in the response.
+  url.searchParams.set('linkedin_sections', '*');
   const res = await uFetch(url.toString(), { headers: jsonHeaders() });
   if (!res.ok) throw new Error(`Unipile profile failed (${res.status}): ${await parseError(res)}`);
 
@@ -328,7 +330,8 @@ export async function unipileGetProfile(
     location: e.location,
     start: e.start ?? e.start_date ?? e.from,
     end: e.end ?? e.end_date ?? e.to,
-    current: !!e.current,
+    // Unipile marks a role current by leaving `end` null.
+    current: e.end == null || e.end === '',
     description: e.description,
   }));
   const current = experiences.find((e) => e.current) ?? experiences[0];
@@ -416,6 +419,23 @@ export async function unipileFindLatestLinkedInAccount(): Promise<{ accountId: s
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
   log.info('unipile', 'find latest account', { found: linkedin.length, picked: linkedin[0]?.id });
   return linkedin.length ? { accountId: linkedin[0].id } : null;
+}
+
+/**
+ * The connected account's OWNER identity — a stable LinkedIn member id that does
+ * not change across re-connects (unlike the Unipile account_id). Used as the
+ * tenant key so a user's data persists when they reconnect.
+ */
+export async function unipileGetAccountOwner(
+  accountId: string
+): Promise<{ ownerId: string | null; name: string | null }> {
+  const res = await uFetch(`${base()}/api/v1/accounts/${encodeURIComponent(accountId)}`, {
+    headers: jsonHeaders(),
+  });
+  if (!res.ok) return { ownerId: null, name: null };
+  const data = (await res.json()) as { name?: string; connection_params?: { im?: { id?: string; username?: string } } };
+  const im = data.connection_params?.im ?? {};
+  return { ownerId: im.id ?? null, name: data.name ?? im.username ?? null };
 }
 
 export type UnipileAccountState = 'OK' | 'CONNECTING' | 'CREDENTIALS' | 'GONE' | 'UNKNOWN';
