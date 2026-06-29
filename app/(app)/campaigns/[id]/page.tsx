@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import CampaignChat, { type ChatLead } from '@/app/components/CampaignChat';
 
 interface CLead {
   id: string;
+  lead_id: string;
   status: string;
   error: string | null;
   sent_at: string | null;
@@ -34,6 +36,8 @@ export default function CampaignDetail() {
   const [limits, setLimits] = useState<{ daily: number; weekly: number }>({ daily: 25, weekly: 100 });
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<'pipeline' | 'inbox'>('pipeline');
+  const [editing, setEditing] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/campaigns/${id}`);
@@ -61,7 +65,8 @@ export default function CampaignDetail() {
     load();
   }
 
-  async function setStatus(action: 'activate' | 'pause') {
+  async function setStatus(action: 'activate' | 'pause' | 'resume' | 'cancel') {
+    if (action === 'cancel' && !confirm('Cancel this campaign? Unsent messages will be skipped.')) return;
     setBusy(true);
     setMsg(null);
     const res = await fetch(`/api/campaigns/${id}/status`, {
@@ -73,7 +78,35 @@ export default function CampaignDetail() {
     setBusy(false);
     if (!res.ok) setMsg(`${action} failed: ${data.error ?? res.status}`);
     else {
-      setMsg(action === 'activate' ? 'Campaign activated — messages will send within your daily limit.' : 'Campaign paused.');
+      if (action === 'activate' || action === 'resume')
+        setMsg(`Sent ${data.sent ?? 0} now${data.sent === 0 && data.reason === 'limit_reached' ? ' (daily limit reached)' : ''}. The rest send automatically each day.`);
+      else setMsg(action === 'pause' ? 'Campaign paused.' : 'Campaign cancelled.');
+      load();
+    }
+  }
+
+  async function sendNow() {
+    setBusy(true);
+    setMsg(null);
+    const res = await fetch(`/api/campaigns/${id}/send-now`, { method: 'POST' });
+    const data = await res.json();
+    setBusy(false);
+    if (!res.ok) setMsg('Send failed: ' + (data.error ?? res.status));
+    else setMsg(data.sent > 0 ? `Sent ${data.sent} message(s).` : data.reason === 'limit_reached' ? 'Daily/weekly limit reached.' : 'Nothing to send.');
+    load();
+  }
+
+  async function review(campaignLeadId: string, action: 'approve' | 'skip' | 'edit', body?: string) {
+    const res = await fetch(`/api/campaigns/${id}/review`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ campaignLeadId, action, body }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      setMsg(`${action} failed: ${d.error ?? res.status}`);
+    } else {
+      setEditing((p) => { const n = { ...p }; delete n[campaignLeadId]; return n; });
       load();
     }
   }
@@ -89,22 +122,38 @@ export default function CampaignDetail() {
   const counts = leads.reduce<Record<string, number>>((a, l) => ({ ...a, [l.status]: (a[l.status] ?? 0) + 1 }), {});
   const name = (l: CLead['leads']) => [l?.first_name, l?.last_name].filter(Boolean).join(' ') || 'Lead';
   const badge = (s: string) => (s === 'sent' ? 'good' : s === 'failed' ? 'bad' : s === 'approved' ? 'warn' : 'plain');
+  const chatLeads: ChatLead[] = leads.map((l) => ({
+    leadId: l.lead_id,
+    name: name(l.leads),
+    subtitle: [l.leads?.current_title, l.leads?.current_company].filter(Boolean).join(' · ') || undefined,
+  }));
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>{campaign.name}</h1>
-          <div className="sub">
-            <span className={`badge ${campaign.status === 'active' ? 'good' : campaign.status === 'paused' ? 'warn' : 'plain'}`}>{campaign.status}</span>
-          </div>
+      {/* Compact campaign toolbar (keeps the chat tall) */}
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14, gap: 10 }}>
+        <div className="row" style={{ gap: 10, minWidth: 0 }}>
+          <h1 style={{ fontSize: 19, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campaign.name}</h1>
+          <span className={`badge ${campaign.status === 'active' ? 'good' : campaign.status === 'paused' ? 'warn' : 'plain'}`}>{campaign.status}</span>
         </div>
-        <div className="spacer" />
-        <button className="btn ghost" onClick={remove}>Delete</button>
+        <div className="row" style={{ gap: 8 }}>
+          <div className="seg">
+            <button className={view === 'pipeline' ? 'on' : ''} onClick={() => setView('pipeline')}>Pipeline</button>
+            <button className={view === 'inbox' ? 'on' : ''} onClick={() => setView('inbox')}>Inbox</button>
+          </div>
+          <button className="btn ghost sm" onClick={remove}>Delete</button>
+        </div>
       </div>
 
-      {msg && <div className="notice">{msg}</div>}
+      {msg && view === 'pipeline' && <div className="notice">{msg}</div>}
 
+      {view === 'inbox' && (
+        <div style={{ height: 'calc(100vh - var(--topbar-h) - 92px)', minHeight: 460 }}>
+          <CampaignChat leads={chatLeads} />
+        </div>
+      )}
+
+      {view === 'pipeline' && (
       <div className="split">
         <div>
           <div className="card">
@@ -112,14 +161,22 @@ export default function CampaignDetail() {
             <p><strong>CTA:</strong> <span className="muted">{campaign.cta || '—'}</span></p>
             <p><strong>Offer:</strong> <span className="muted">{campaign.offer || '—'}</span></p>
             <div className="row" style={{ marginTop: 12, gap: 8 }}>
-              {(counts.pending || counts.failed) && (
-                <button className="btn" onClick={generate} disabled={busy}>Generate messages</button>
+              {!!(counts.pending || counts.failed) && (
+                <button className="btn secondary" onClick={generate} disabled={busy}>Generate messages</button>
               )}
-              {campaign.status !== 'active' && counts.generated > 0 && (
-                <button className="btn" onClick={() => setStatus('activate')} disabled={busy}>Activate &amp; send</button>
+              {['draft', 'paused'].includes(campaign.status) && (counts.approved > 0 || counts.generated > 0) && (
+                <button className="btn" onClick={() => setStatus(campaign.status === 'paused' ? 'resume' : 'activate')} disabled={busy}>
+                  {campaign.status === 'paused' ? 'Resume & send' : 'Activate & send'}
+                </button>
               )}
               {campaign.status === 'active' && (
-                <button className="btn secondary" onClick={() => setStatus('pause')} disabled={busy}>Pause</button>
+                <>
+                  <button className="btn" onClick={sendNow} disabled={busy}>Send now</button>
+                  <button className="btn secondary" onClick={() => setStatus('pause')} disabled={busy}>Pause</button>
+                </>
+              )}
+              {['draft', 'active', 'paused'].includes(campaign.status) && (
+                <button className="btn ghost" onClick={() => setStatus('cancel')} disabled={busy}>Cancel</button>
               )}
             </div>
             <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
@@ -132,7 +189,7 @@ export default function CampaignDetail() {
             <h2>Leads</h2>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Name</th><th>Message</th><th>Status</th></tr></thead>
+                <thead><tr><th>Name</th><th>Message</th><th>Status</th><th>Review</th></tr></thead>
                 <tbody>
                   {leads.map((l) => (
                     <tr key={l.id}>
@@ -140,10 +197,30 @@ export default function CampaignDetail() {
                         <a href={l.leads?.profile_url} target="_blank" rel="noreferrer">{name(l.leads)}</a>
                         <div className="muted" style={{ fontSize: 12 }}>{l.leads?.current_title ?? ''}{l.leads?.current_company ? ` · ${l.leads.current_company}` : ''}</div>
                       </td>
-                      <td className="muted" style={{ fontSize: 13, maxWidth: 360 }}>{l.messages?.body ? l.messages.body.slice(0, 140) + (l.messages.body.length > 140 ? '…' : '') : '—'}</td>
+                      <td className="muted" style={{ fontSize: 13, maxWidth: 360 }}>
+                        {l.id in editing ? (
+                          <textarea rows={4} value={editing[l.id]} onChange={(e) => setEditing((p) => ({ ...p, [l.id]: e.target.value }))} />
+                        ) : (
+                          l.messages?.body ? l.messages.body.slice(0, 160) + (l.messages.body.length > 160 ? '…' : '') : '—'
+                        )}
+                      </td>
                       <td>
                         <span className={`badge ${badge(l.status)}`}>{l.status}</span>
                         {l.sent_at && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{new Date(l.sent_at).toLocaleString()}</div>}
+                      </td>
+                      <td>
+                        {l.id in editing ? (
+                          <div className="row" style={{ gap: 6 }}>
+                            <button className="btn sm" disabled={!editing[l.id].trim()} onClick={() => review(l.id, 'edit', editing[l.id].trim())}>Save</button>
+                            <button className="btn ghost sm" onClick={() => setEditing((p) => { const n = { ...p }; delete n[l.id]; return n; })}>Cancel</button>
+                          </div>
+                        ) : (l.status === 'generated' || l.status === 'approved') ? (
+                          <div className="row" style={{ gap: 6 }}>
+                            {l.status === 'generated' && <button className="btn sm" onClick={() => review(l.id, 'approve')}>Approve</button>}
+                            {l.messages?.body && <button className="btn secondary sm" onClick={() => setEditing((p) => ({ ...p, [l.id]: l.messages!.body }))}>Edit</button>}
+                            <button className="btn ghost sm" onClick={() => review(l.id, 'skip')}>Skip</button>
+                          </div>
+                        ) : <span className="muted">—</span>}
                       </td>
                     </tr>
                   ))}
@@ -181,6 +258,7 @@ export default function CampaignDetail() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

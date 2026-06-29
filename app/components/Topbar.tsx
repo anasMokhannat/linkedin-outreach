@@ -2,12 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import Logo from './Logo';
+import Notifications from './Notifications';
 
 export default function Topbar() {
   const router = useRouter();
 
   async function signOut() {
-    await fetch('/api/auth/signout', { method: 'POST' });
+    if (!confirm('Sign out and disconnect your LinkedIn account from Unipile?')) return;
+    // Full disconnect: removes the Unipile account + clears the session.
+    await fetch('/api/linkedin/connect', { method: 'DELETE' });
     router.push('/');
     router.refresh();
   }
@@ -19,6 +22,7 @@ export default function Topbar() {
       </span>
       <div className="right">
         <span className="badge good">LinkedIn connected</span>
+        <Notifications />
         <button className="btn ghost sm" onClick={signOut}>
           Sign out
         </button>

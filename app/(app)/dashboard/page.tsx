@@ -11,39 +11,26 @@ export default async function OverviewPage() {
   const accountId = await requireAccountId();
   const svc = createSupabaseServiceClient();
 
-  const { data: account } = await svc
-    .from('linkedin_accounts')
-    .select('status, dms_per_day, leads_to_message, last_sync_at')
-    .eq('id', accountId)
-    .maybeSingle();
-
   const today = new Date().toISOString().slice(0, 10);
-  const { data: usage } = await svc
-    .from('daily_usage')
-    .select('dms_sent')
-    .eq('account_id', accountId)
-    .eq('day', today)
-    .maybeSingle();
 
-  const [{ count: leads }, { count: sent }, { count: drafts }] = await Promise.all([
+  // All independent — run in parallel to keep navigation snappy.
+  const [
+    { data: account },
+    { data: usage },
+    { count: leads },
+    { count: sent },
+    { count: drafts },
+    { data: recentLeads },
+    { data: events },
+  ] = await Promise.all([
+    svc.from('linkedin_accounts').select('status, dms_per_day, leads_to_message, last_sync_at').eq('id', accountId).maybeSingle(),
+    svc.from('daily_usage').select('dms_sent').eq('account_id', accountId).eq('day', today).maybeSingle(),
     svc.from('leads').select('id', { count: 'exact', head: true }).eq('account_id', accountId),
     svc.from('messages').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'sent'),
     svc.from('messages').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'draft'),
+    svc.from('leads').select('id, first_name, last_name, current_title, current_company, enriched_at, created_at').eq('account_id', accountId).order('created_at', { ascending: false }).limit(6),
+    svc.from('send_log').select('event, created_at').eq('account_id', accountId).order('created_at', { ascending: false }).limit(7),
   ]);
-
-  // Recent leads + activity to fill the page.
-  const { data: recentLeads } = await svc
-    .from('leads')
-    .select('id, first_name, last_name, current_title, current_company, enriched_at, created_at')
-    .eq('account_id', accountId)
-    .order('created_at', { ascending: false })
-    .limit(6);
-  const { data: events } = await svc
-    .from('send_log')
-    .select('event, created_at')
-    .eq('account_id', accountId)
-    .order('created_at', { ascending: false })
-    .limit(7);
 
   const caps = capStatus(usage?.dms_sent ?? 0, DAILY_MESSAGE_LIMIT);
   const pct = caps.cap > 0 ? Math.min(100, Math.round((caps.sent / caps.cap) * 100)) : 0;

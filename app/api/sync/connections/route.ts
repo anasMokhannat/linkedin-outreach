@@ -50,6 +50,7 @@ export async function POST() {
       .from('linkedin_accounts')
       .update({
         staged_connections: connections,
+        staged_count: connections.length,
         last_sync_status: 'succeeded',
         last_sync_at: new Date().toISOString(),
         last_validated: new Date().toISOString(),
