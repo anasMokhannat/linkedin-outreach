@@ -40,3 +40,6 @@ export const IconSparkle = (p: SVGProps<SVGSVGElement>) => (
 export const IconCampaign = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="m3 11 14-7v16L3 13Z" /><path d="M7 12v6a2 2 0 0 0 4 0v-2" /><path d="M17 9a3 3 0 0 1 0 6" /></svg>
 );
+export const IconBell = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>
+);

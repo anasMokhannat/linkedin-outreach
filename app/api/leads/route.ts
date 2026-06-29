@@ -23,12 +23,14 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(500);
 
-    const location = url.searchParams.get('location')?.trim();
-    const school = url.searchParams.get('school')?.trim();
     const industry = url.searchParams.get('industry')?.trim();
-    if (location) query = query.ilike('location', `%${location}%`);
-    if (school) query = query.ilike('school', `%${school}%`);
+    const company = url.searchParams.get('company')?.trim();
+    const title = url.searchParams.get('title')?.trim();
+    const name = url.searchParams.get('name')?.trim();
     if (industry) query = query.ilike('industry', `%${industry}%`);
+    if (company) query = query.ilike('current_company', `%${company}%`);
+    if (title) query = query.ilike('current_title', `%${title}%`);
+    if (name) query = query.or(`first_name.ilike.%${name}%,last_name.ilike.%${name}%`);
     if (url.searchParams.get('enriched') === 'true') query = query.not('enriched_at', 'is', null);
 
     const { data: leads, error } = await query;

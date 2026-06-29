@@ -18,7 +18,7 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
 
     const { data: message } = await svc
       .from('messages')
-      .select('id, status, body, leads(provider_member_id)')
+      .select('id, status, body, lead_id, leads(provider_member_id)')
       .eq('id', params.id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -42,8 +42,13 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     if (usage.allowedNow <= 0) throw new HttpError(429, 'Sending limit reached — continue later.');
 
     log.info('send', 'sending', { accountId, messageId: params.id });
+    let leadId: string | undefined;
     try {
-      await unipileSendNewMessage(account.unipile_account_id, recipientId, message.body);
+      const sent = await unipileSendNewMessage(account.unipile_account_id, recipientId, message.body);
+      leadId = (message as { lead_id?: string }).lead_id;
+      if (sent.chatId && leadId) {
+        await svc.from('leads').update({ provider_chat_id: sent.chatId }).eq('id', leadId);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'send failed';
       if (isUnipileAuthError(msg)) {

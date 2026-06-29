@@ -44,6 +44,11 @@ export function verifySession(token: string | undefined | null): string | null {
   return accountId;
 }
 
+/** Non-guessable token placed in the Unipile webhook URL and verified on receipt. */
+export function webhookToken(): string {
+  return hmac('unipile-messages-webhook').slice(0, 24);
+}
+
 export function sessionCookieOptions() {
   return {
     httpOnly: true,

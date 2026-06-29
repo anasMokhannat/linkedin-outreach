@@ -2,8 +2,9 @@ import 'server-only';
 import { NextResponse } from 'next/server';
 import { HttpError } from './auth';
 import { createSupabaseServiceClient } from './supabase-server';
-import { unipileWaitForAccount, unipileGetAccountOwner } from './unipile';
-import { signSession, SESSION_COOKIE, sessionCookieOptions } from './session';
+import { unipileWaitForAccount, unipileGetAccountOwner, unipileEnsureMessagingWebhook } from './unipile';
+import { signSession, SESSION_COOKIE, sessionCookieOptions, webhookToken } from './session';
+import { publicEnv } from './env';
 import { log } from './log';
 
 /**
@@ -89,6 +90,17 @@ export async function finalizeConnection(
   }
 
   if (!accountRowId) throw new Error('Failed to resolve account');
+
+  // Best-effort: register the workspace messaging webhook for instant replies.
+  // Only with a public base URL (Unipile can't reach localhost).
+  try {
+    const appUrl = publicEnv.appBaseUrl();
+    if (!/localhost|127\.0\.0\.1/.test(appUrl)) {
+      await unipileEnsureMessagingWebhook(`${appUrl}/api/webhooks/unipile-messages?s=${webhookToken()}`);
+    }
+  } catch {
+    /* non-fatal */
+  }
 
   await svc.from('send_log').insert({
     account_id: accountRowId,

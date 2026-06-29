@@ -15,15 +15,31 @@ export async function GET(req: NextRequest) {
   try {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
+    const reqUrl = new URL(req.url);
+
+    // Lightweight metadata (no big jsonb fetch) — used by the Leads page to
+    // decide whether to auto-sync without pulling all staged connections.
+    if (reqUrl.searchParams.get('meta')) {
+      const { data: meta } = await svc
+        .from('linkedin_accounts')
+        .select('last_sync_status, last_sync_at, staged_count')
+        .eq('id', accountId)
+        .maybeSingle();
+      return json({
+        status: meta?.last_sync_status ?? 'none',
+        lastSyncAt: meta?.last_sync_at ?? null,
+        count: meta?.staged_count ?? 0,
+      });
+    }
 
     const { data: account } = await svc
       .from('linkedin_accounts')
-      .select('last_sync_status, staged_connections')
+      .select('last_sync_status, last_sync_at, staged_connections')
       .eq('id', accountId)
       .maybeSingle();
 
     if (!account || !Array.isArray(account.staged_connections)) {
-      return json({ status: account?.last_sync_status ?? 'none', connections: [] });
+      return json({ status: account?.last_sync_status ?? 'none', lastSyncAt: account?.last_sync_at ?? null, connections: [] });
     }
 
     let connections = account.staged_connections as StagedConnection[];
@@ -46,6 +62,7 @@ export async function GET(req: NextRequest) {
 
     return json({
       status: account.last_sync_status ?? 'succeeded',
+      lastSyncAt: account.last_sync_at ?? null,
       total: connections.length,
       connections: connections.slice(0, 1000).map((c) => ({ ...c, alreadyLead: persisted.has(c.profileUrl) })),
     });

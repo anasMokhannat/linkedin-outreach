@@ -507,7 +507,8 @@ export function isUnipileAuthError(message: string): boolean {
 /**
  * Start a new chat (send the first DM) to a relation. attendeeId is the relation's
  * Unipile member_id. Uses multipart/form-data, which Unipile expects for chat
- * creation (it also supports attachments).
+ * creation (it also supports attachments). Returns the chat_id so we can map the
+ * lead to its conversation.
  */
 export async function unipileSendNewMessage(
   accountId: string,
@@ -525,7 +526,114 @@ export async function unipileSendNewMessage(
     body: form,
   });
   if (!res.ok) throw new Error(`Unipile send failed (${res.status}): ${await parseError(res)}`);
-  const data = (await res.json().catch(() => ({}))) as { chat_id?: string };
-  log.info('unipile', 'dm sent', { chatId: data.chat_id });
-  return { chatId: data.chat_id };
+  const data = (await res.json().catch(() => ({}))) as { chat_id?: string; id?: string };
+  const chatId = data.chat_id ?? data.id;
+  log.info('unipile', 'dm sent', { chatId });
+  return { chatId };
+}
+
+/**
+ * Ensure a workspace-wide messaging webhook exists for new messages
+ * (message_received). Idempotent: skips if one already points at request_url.
+ */
+export async function unipileEnsureMessagingWebhook(requestUrl: string): Promise<void> {
+  try {
+    const list = await uFetch(`${base()}/api/v1/webhooks`, { headers: jsonHeaders() });
+    if (list.ok) {
+      const data = (await list.json()) as { items?: Array<{ request_url?: string }> };
+      if ((data.items ?? []).some((w) => w.request_url === requestUrl)) {
+        log.info('unipile', 'messaging webhook already registered');
+        return;
+      }
+    }
+  } catch {
+    /* listing may not be supported; fall through to create */
+  }
+  const res = await uFetch(`${base()}/api/v1/webhooks`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      source: 'messaging',
+      request_url: requestUrl,
+      events: ['message_received'],
+      format: 'json',
+      name: 'flugia-replies',
+    }),
+  });
+  log.info('unipile', 'messaging webhook registered', { ok: res.ok });
+}
+
+/** Send a message into an existing chat. */
+export async function unipileSendInChat(chatId: string, text: string): Promise<void> {
+  const form = new FormData();
+  form.append('text', text);
+  const res = await uFetch(`${base()}/api/v1/chats/${encodeURIComponent(chatId)}/messages`, {
+    method: 'POST',
+    headers: { 'X-API-KEY': serverEnv.unipileApiKey(), accept: 'application/json' },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`Unipile send-in-chat failed (${res.status}): ${await parseError(res)}`);
+}
+
+/**
+ * Resolve the current chat id for a 1:1 conversation with an attendee, under a
+ * given account. Chat ids are per Unipile account, so a stored id becomes stale
+ * after a reconnect — this re-finds it by the attendee's stable provider id.
+ */
+export async function unipileFindChatByAttendee(
+  accountId: string,
+  attendeeProviderId: string,
+  maxPages = 10
+): Promise<string | null> {
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const url = new URL(`${base()}/api/v1/chats`);
+    url.searchParams.set('account_id', accountId);
+    url.searchParams.set('limit', '100');
+    if (cursor) url.searchParams.set('cursor', cursor);
+    const res = await uFetch(url.toString(), { headers: jsonHeaders() });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      items?: Array<{ id: string; attendee_provider_id?: string }>;
+      cursor?: string | null;
+    };
+    const hit = (data.items ?? []).find((c) => c.attendee_provider_id === attendeeProviderId);
+    if (hit) return hit.id;
+    if (!data.cursor) break;
+    cursor = data.cursor;
+  }
+  return null;
+}
+
+export interface ChatMessage {
+  id: string;
+  fromMe: boolean;
+  text: string;
+  at: string | null;
+}
+
+/**
+ * Read a conversation's messages (ours + the lead's replies), oldest→newest.
+ * Returns null when the chat id is not found (404) — the caller can then
+ * re-resolve the current chat id. Other errors return [].
+ */
+export async function unipileGetChatMessages(chatId: string, limit = 100): Promise<ChatMessage[] | null> {
+  const url = new URL(`${base()}/api/v1/chats/${encodeURIComponent(chatId)}/messages`);
+  url.searchParams.set('limit', String(limit));
+  const res = await uFetch(url.toString(), { headers: jsonHeaders() });
+  if (res.status === 404) return null;
+  if (!res.ok) return [];
+  const data = (await res.json()) as {
+    items?: Array<{ id: string; text?: string; is_sender?: number | boolean; timestamp?: string }>;
+  };
+  const msgs = (data.items ?? [])
+    .filter((m) => m.text)
+    .map((m) => ({
+      id: m.id,
+      fromMe: m.is_sender === 1 || m.is_sender === true,
+      text: m.text as string,
+      at: m.timestamp ?? null,
+    }));
+  // Unipile returns newest-first; show oldest-first for a chat transcript.
+  return msgs.reverse();
 }
