@@ -1,42 +1,57 @@
 import { type NextRequest } from 'next/server';
-import { requireAccountId, HttpError } from '@/lib/auth';
+import { requireUserId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** GET /api/settings — the two configurable numbers + account status. */
+const COMPANY_FIELDS = [
+  'company_name',
+  'company_description',
+  'company_services',
+  'company_usps',
+  'company_pain_points',
+] as const;
+
+/** GET /api/settings — company context (for AI) + linkedin connection status. */
 export async function GET() {
   try {
-    const accountId = await requireAccountId();
+    const userId = await requireUserId();
     const svc = createSupabaseServiceClient();
-    const { data } = await svc
-      .from('linkedin_accounts')
-      .select('status, display_name, dms_per_day, leads_to_message, last_validated')
-      .eq('id', accountId)
+
+    const { data: user } = await svc
+      .from('users')
+      .select('email, company_name, company_description, company_services, company_usps, company_pain_points')
+      .eq('id', userId)
       .maybeSingle();
-    return json({ settings: data ?? {} });
+
+    const { data: account } = await svc
+      .from('linkedin_accounts')
+      .select('status, display_name, last_validated')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    return json({ user: user ?? {}, linkedin: account ?? { status: 'disconnected' } });
   } catch (err) {
     return errorResponse(err);
   }
 }
 
-/** PATCH /api/settings — update messages/day and leads-to-message. */
+/** PATCH /api/settings — update the company context fields. */
 export async function PATCH(req: NextRequest) {
   try {
-    const accountId = await requireAccountId();
+    const userId = await requireUserId();
     const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined);
 
     const update: Record<string, unknown> = {};
-    if (num(b.dms_per_day) !== undefined) update.dms_per_day = Math.min(200, Math.max(1, num(b.dms_per_day)!));
-    if (num(b.leads_to_message) !== undefined)
-      update.leads_to_message = Math.min(100000, Math.max(0, num(b.leads_to_message)!));
+    for (const f of COMPANY_FIELDS) {
+      if (typeof b[f] === 'string') update[f] = (b[f] as string).slice(0, 4000);
+    }
     if (Object.keys(update).length === 0) throw new HttpError(400, 'Nothing to update.');
 
     const svc = createSupabaseServiceClient();
-    const { error } = await svc.from('linkedin_accounts').update(update).eq('id', accountId);
+    const { error } = await svc.from('users').update(update).eq('id', userId);
     if (error) throw new Error(error.message);
     return json({ ok: true });
   } catch (err) {

@@ -8,7 +8,7 @@
   --text-soft: #3a4354;
   --muted: #6b7480;
   --accent: #2bb3e0;          /* FLUGIA sky blue */
-  --accent-hover: #1f97c2;
+  --accent-hover: #028ec1;
   --accent-soft: #e6f6fc;
   --accent-2: #4361ee;        /* logo indigo, for gradients */
   --good: #15803d;
@@ -174,7 +174,19 @@ tbody tr:hover { background: var(--surface-2); }
 .bubble-time { font-size: 10.5px; color: var(--muted); margin-top: 3px; }
 .chat-date { align-self: center; font-size: 11px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); padding: 2px 10px; border-radius: 999px; margin: 12px 0 6px; }
 .chat-empty { flex: 1; display: grid; place-items: center; color: var(--muted); font-size: 13.5px; text-align: center; padding: 24px; }
+/* Full-bleed inbox: pin to the content area (right of the nav, below the top
+   bar) so it ignores .app-main's max-width/centering and fills all the space. */
+.inbox-full { position: fixed; top: var(--topbar-h); left: var(--sidebar-w); right: 0; bottom: 0; }
+/* Flush against the pinned edges — no rounded corners / card chrome. */
+.inbox-full .chat { border-radius: 0; border: none; box-shadow: none; }
+@media (max-width: 880px) {
+  .inbox-full { position: static; margin: -20px -16px -48px; height: calc(100vh - var(--topbar-h)); }
+}
 @media (max-width: 720px) { .chat-side { width: 132px; } .avatar-c { display: none; } }
+
+/* ---- Campaign cards ---- */
+.campaign-card { transition: box-shadow .12s, transform .12s, border-color .12s; }
+.campaign-card:hover { box-shadow: var(--shadow); border-color: var(--accent); transform: translateY(-1px); }
 
 /* ---- Segmented control ---- */
 .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; }

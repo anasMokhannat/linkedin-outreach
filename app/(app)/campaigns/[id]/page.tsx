@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import CampaignChat, { type ChatLead } from '@/app/components/CampaignChat';
+import { useConfirm } from '@/app/components/ConfirmDialog';
 
 interface CLead {
   id: string;
@@ -30,13 +30,13 @@ interface Usage {
 export default function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const confirm = useConfirm();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [leads, setLeads] = useState<CLead[]>([]);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [limits, setLimits] = useState<{ daily: number; weekly: number }>({ daily: 25, weekly: 100 });
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<'pipeline' | 'inbox'>('pipeline');
   const [editing, setEditing] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
@@ -66,7 +66,11 @@ export default function CampaignDetail() {
   }
 
   async function setStatus(action: 'activate' | 'pause' | 'resume' | 'cancel') {
-    if (action === 'cancel' && !confirm('Cancel this campaign? Unsent messages will be skipped.')) return;
+    if (
+      action === 'cancel' &&
+      !(await confirm({ title: 'Cancel campaign', message: 'Cancel this campaign? Unsent messages will be skipped.', confirmLabel: 'Cancel campaign', cancelLabel: 'Keep running', danger: true }))
+    )
+      return;
     setBusy(true);
     setMsg(null);
     const res = await fetch(`/api/campaigns/${id}/status`, {
@@ -112,7 +116,7 @@ export default function CampaignDetail() {
   }
 
   async function remove() {
-    if (!confirm('Delete this campaign? Generated messages are removed too.')) return;
+    if (!(await confirm({ title: 'Delete campaign', message: 'Delete this campaign? Generated messages are removed too.', confirmLabel: 'Delete', danger: true }))) return;
     await fetch(`/api/campaigns/${id}`, { method: 'DELETE' });
     router.push('/campaigns');
   }
@@ -122,38 +126,20 @@ export default function CampaignDetail() {
   const counts = leads.reduce<Record<string, number>>((a, l) => ({ ...a, [l.status]: (a[l.status] ?? 0) + 1 }), {});
   const name = (l: CLead['leads']) => [l?.first_name, l?.last_name].filter(Boolean).join(' ') || 'Lead';
   const badge = (s: string) => (s === 'sent' ? 'good' : s === 'failed' ? 'bad' : s === 'approved' ? 'warn' : 'plain');
-  const chatLeads: ChatLead[] = leads.map((l) => ({
-    leadId: l.lead_id,
-    name: name(l.leads),
-    subtitle: [l.leads?.current_title, l.leads?.current_company].filter(Boolean).join(' · ') || undefined,
-  }));
 
   return (
     <div>
-      {/* Compact campaign toolbar (keeps the chat tall) */}
+      {/* Compact campaign toolbar */}
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14, gap: 10 }}>
         <div className="row" style={{ gap: 10, minWidth: 0 }}>
           <h1 style={{ fontSize: 19, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campaign.name}</h1>
           <span className={`badge ${campaign.status === 'active' ? 'good' : campaign.status === 'paused' ? 'warn' : 'plain'}`}>{campaign.status}</span>
         </div>
-        <div className="row" style={{ gap: 8 }}>
-          <div className="seg">
-            <button className={view === 'pipeline' ? 'on' : ''} onClick={() => setView('pipeline')}>Pipeline</button>
-            <button className={view === 'inbox' ? 'on' : ''} onClick={() => setView('inbox')}>Inbox</button>
-          </div>
-          <button className="btn ghost sm" onClick={remove}>Delete</button>
-        </div>
+        <button className="btn ghost sm" onClick={remove}>Delete</button>
       </div>
 
-      {msg && view === 'pipeline' && <div className="notice">{msg}</div>}
+      {msg && <div className="notice">{msg}</div>}
 
-      {view === 'inbox' && (
-        <div style={{ height: 'calc(100vh - var(--topbar-h) - 92px)', minHeight: 460 }}>
-          <CampaignChat leads={chatLeads} />
-        </div>
-      )}
-
-      {view === 'pipeline' && (
       <div className="split">
         <div>
           <div className="card">
@@ -179,10 +165,14 @@ export default function CampaignDetail() {
                 <button className="btn ghost" onClick={() => setStatus('cancel')} disabled={busy}>Cancel</button>
               )}
             </div>
-            <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-              {counts.pending ?? 0} pending · {counts.generated ?? 0} drafted · {counts.approved ?? 0} queued · {counts.sent ?? 0} sent
-              {counts.failed ? ` · ${counts.failed} failed` : ''}
-            </p>
+            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+              <span className="badge plain">{counts.pending ?? 0} pending</span>
+              <span className="badge plain">{counts.generated ?? 0} drafted</span>
+              <span className="badge warn">{counts.approved ?? 0} queued</span>
+              <span className="badge good">{counts.sent ?? 0} sent</span>
+              {counts.failed ? <span className="badge bad">{counts.failed} failed</span> : null}
+              {counts.skipped ? <span className="badge plain">{counts.skipped} skipped</span> : null}
+            </div>
           </div>
 
           <div className="card" style={{ marginBottom: 0 }}>
@@ -258,7 +248,6 @@ export default function CampaignDetail() {
           )}
         </div>
       </div>
-      )}
     </div>
   );
 }

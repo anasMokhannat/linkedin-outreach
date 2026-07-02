@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { HttpError } from '@/lib/auth';
+import { HttpError, requireUserId } from '@/lib/auth';
 import { errorResponse } from '@/lib/http';
 import { finalizeConnection } from '@/lib/connect';
 
@@ -15,6 +15,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: NextRequest) {
   try {
+    const userId = await requireUserId();
     const body = (await req.json().catch(() => ({}))) as { accountId?: unknown; country?: unknown };
     const accountId = typeof body.accountId === 'string' ? body.accountId : '';
     const country =
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
         : null;
     if (!accountId) throw new HttpError(400, 'accountId required.');
     // Tolerate a transient 404 while the user is still approving on their phone.
-    return await finalizeConnection(accountId, country, { tolerateGone: true });
+    return await finalizeConnection(accountId, country, userId, { tolerateGone: true });
   } catch (err) {
     return errorResponse(err);
   }

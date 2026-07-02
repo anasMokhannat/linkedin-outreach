@@ -2,14 +2,22 @@ import { type NextRequest } from 'next/server';
 import { requireAccountId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
+import { enrichLead, LeadAuthError } from '@/lib/enrich';
 import type { StagedConnection } from '@/lib/types';
+import { log } from '@/lib/log';
 
 export const runtime = 'nodejs';
+export const maxDuration = 60;
+
+// Cap how many we enrich inline per request so the serverless call finishes.
+// Anything beyond this stays as a saved-but-unenriched lead (the Enrich button
+// re-runs it), so nothing is lost.
+const ENRICH_CAP = 30;
 
 /**
  * POST /api/leads/select  { connections: StagedConnection[] }
- * First persistence point — only selected connections become leads, scoped to
- * the current account.
+ * First persistence point — selected connections become leads (account-scoped),
+ * then are auto-enriched (profile + email, best-effort) right away.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -38,10 +46,33 @@ export async function POST(req: NextRequest) {
     const { data, error } = await svc
       .from('leads')
       .upsert(rows, { onConflict: 'account_id,profile_url', ignoreDuplicates: true })
-      .select('id');
+      .select('id, profile_url, provider_member_id');
     if (error) throw new Error(error.message);
 
-    return json({ ok: true, inserted: data?.length ?? 0, requested: rows.length });
+    const inserted = data ?? [];
+
+    // Auto-enrich the freshly added leads (best-effort, bounded).
+    let enriched = 0;
+    const { data: account } = await svc
+      .from('linkedin_accounts')
+      .select('unipile_account_id')
+      .eq('id', accountId)
+      .maybeSingle();
+    if (account?.unipile_account_id) {
+      for (const lead of inserted.slice(0, ENRICH_CAP)) {
+        try {
+          if (await enrichLead(svc, accountId, account.unipile_account_id, lead)) enriched++;
+        } catch (e) {
+          if (e instanceof LeadAuthError) {
+            await svc.from('linkedin_accounts').update({ status: 'needs_reauth' }).eq('id', accountId);
+            break; // session is broken — stop; leads remain saved.
+          }
+          log.warn('leads', 'auto-enrich failed', { leadId: lead.id });
+        }
+      }
+    }
+
+    return json({ ok: true, inserted: inserted.length, requested: rows.length, enriched });
   } catch (err) {
     return errorResponse(err);
   }

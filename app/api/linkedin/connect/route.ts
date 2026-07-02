@@ -1,10 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { requireAccountId, HttpError } from '@/lib/auth';
+import { requireAccountId, requireUserId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { unipileConnectWithCookie, unipileDeleteAccount } from '@/lib/unipile';
 import { finalizeConnection } from '@/lib/connect';
-import { SESSION_COOKIE } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
@@ -14,6 +13,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: NextRequest) {
   try {
+    const userId = await requireUserId();
     const body = (await req.json().catch(() => ({}))) as { liAt?: unknown; proxyCountry?: unknown };
     const liAt = typeof body.liAt === 'string' ? body.liAt.trim() : '';
     const country =
@@ -28,13 +28,17 @@ export async function POST(req: NextRequest) {
     if (result.checkpoint) {
       return json({ status: 'checkpoint', checkpointType: result.checkpoint, accountId: result.accountId });
     }
-    return await finalizeConnection(result.accountId, country);
+    return await finalizeConnection(result.accountId, country, userId);
   } catch (err) {
     return errorResponse(err);
   }
 }
 
-/** DELETE /api/linkedin/connect — disconnect: remove the Unipile account + clear session. */
+/**
+ * DELETE /api/linkedin/connect — disconnect LinkedIn: remove the Unipile account
+ * and detach it from the user. The app session stays intact (user remains
+ * signed in); they land back on the connect page.
+ */
 export async function DELETE() {
   try {
     const accountId = await requireAccountId();
@@ -52,11 +56,14 @@ export async function DELETE() {
         /* best-effort */
       }
     }
-    await svc.from('linkedin_accounts').update({ status: 'disconnected' }).eq('id', accountId);
+    // Detach from the user so a fresh connect starts clean (and requireAccountId
+    // reports "no LinkedIn connected").
+    await svc
+      .from('linkedin_accounts')
+      .update({ status: 'disconnected', user_id: null, unipile_account_id: null })
+      .eq('id', accountId);
 
-    const res = NextResponse.json({ ok: true, status: 'disconnected' });
-    res.cookies.set(SESSION_COOKIE, '', { path: '/', maxAge: 0 });
-    return res;
+    return NextResponse.json({ ok: true, status: 'disconnected' });
   } catch (err) {
     return errorResponse(err);
   }

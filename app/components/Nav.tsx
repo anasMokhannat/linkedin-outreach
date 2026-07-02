@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { IconGrid, IconUsers, IconSettings, IconCampaign } from './icons';
+import { IconGrid, IconUsers, IconSettings, IconCampaign, IconMail } from './icons';
 
 const LINKS = [
   { href: '/dashboard', label: 'Overview', Icon: IconGrid },
   { href: '/leads', label: 'Leads', Icon: IconUsers },
   { href: '/campaigns', label: 'Campaigns', Icon: IconCampaign },
+  { href: '/inbox', label: 'Inbox', Icon: IconMail },
   { href: '/settings', label: 'Settings', Icon: IconSettings },
 ];
 

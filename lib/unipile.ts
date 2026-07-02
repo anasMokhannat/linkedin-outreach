@@ -298,11 +298,29 @@ export interface UnipileProfile {
   headline?: string | null;
   summary?: string | null;
   companyAbout?: string | null;
+  email?: string | null;
   experiences: UnipileExperience[];
   education: UnipileEducation[];
   skills: string[];
   connectionsCount?: number | null;
   raw: unknown;
+}
+
+/** Best-effort email extraction — LinkedIn only exposes it for some profiles. */
+function extractEmail(p: Record<string, any>): string | null {
+  const emailRe = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  const candidates: unknown[] = [
+    p.email,
+    p.email_address,
+    p.contact_info?.email,
+    Array.isArray(p.contact_info?.emails) ? p.contact_info.emails[0] : undefined,
+    Array.isArray(p.emails) ? p.emails[0] : undefined,
+  ];
+  for (const c of candidates) {
+    const v = typeof c === 'string' ? c : (c as any)?.email ?? (c as any)?.address;
+    if (typeof v === 'string' && emailRe.test(v.trim())) return v.trim();
+  }
+  return null;
 }
 
 /** Retrieve the full LinkedIn profile by identifier (member id or public id). */
@@ -360,6 +378,7 @@ export async function unipileGetProfile(
     school: education[0]?.school ?? null,
     industry: pick('industry') ?? null,
     companyAbout: null,
+    email: extractEmail(p),
     experiences,
     education,
     skills,
