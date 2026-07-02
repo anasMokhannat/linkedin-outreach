@@ -52,12 +52,10 @@ alter table public.campaigns
 alter table public.leads add column if not exists email text;
 
 -- --- seed a login user ------------------------------------------------------
--- Credentials:  email = anas.mokhannat@flugia.com   password = Flugia2026!
--- The password_hash is scrypt (salt$hash), the same scheme lib/password.ts uses.
 -- Idempotent: does nothing if the email already exists.
 insert into public.users (email, password_hash)
 values (
-  'anas.mokhannat@flugia.com',
-  'scrypt$59196ceffe9d1cdf4bc92fbb4b6fbbf3$ca658dff2e3a06ccfd9dfd799427766c0eec7e54d37797d252f1a0ce2d308a5da7332d2d683e6f251fc35de2d5e1a113e5284b93efe2c46ca97f6e475e6505dc'
+  'anas.******.com',
+  '***************'
 )
 on conflict (lower(email)) do nothing;
