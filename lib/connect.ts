@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { HttpError } from './auth';
 import { createSupabaseServiceClient } from './supabase-server';
 import { unipileWaitForAccount, unipileGetAccountOwner, unipileEnsureMessagingWebhook } from './unipile';
-import { signSession, SESSION_COOKIE, sessionCookieOptions, webhookToken } from './session';
+import { webhookToken } from './session';
 import { publicEnv } from './env';
 import { log } from './log';
 
@@ -20,6 +20,7 @@ import { log } from './log';
 export async function finalizeConnection(
   unipileAccountId: string,
   country: string | null,
+  userId: string,
   opts: { tolerateGone?: boolean } = {}
 ) {
   const state = await unipileWaitForAccount(unipileAccountId);
@@ -43,11 +44,12 @@ export async function finalizeConnection(
 
   const svc = createSupabaseServiceClient();
 
-  // Tenant identity = the stable LinkedIn owner id, so reconnecting reuses the
-  // same tenant (and all its leads/messages/settings) even though the Unipile
+  // One LinkedIn account per app user. Reconnecting the same user reuses their
+  // account row (so leads/messages/settings persist) even though the Unipile
   // account_id changes each time.
   const { ownerId, name } = await unipileGetAccountOwner(unipileAccountId);
   const patch = {
+    user_id: userId,
     unipile_account_id: unipileAccountId,
     owner_member_id: ownerId,
     display_name: name,
@@ -57,36 +59,42 @@ export async function finalizeConnection(
   };
 
   let accountRowId: string | undefined;
-  if (ownerId) {
-    const { data: existing } = await svc
+
+  // 1) This user's existing account row.
+  const { data: mine } = await svc
+    .from('linkedin_accounts')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (mine) {
+    await svc.from('linkedin_accounts').update(patch).eq('id', mine.id);
+    accountRowId = mine.id;
+  }
+
+  // 2) Adopt an unowned row for the same LinkedIn owner (preserves data created
+  //    before the app-user layer existed), if the user has none yet.
+  if (!accountRowId && ownerId) {
+    const { data: orphan } = await svc
       .from('linkedin_accounts')
       .select('id')
       .eq('owner_member_id', ownerId)
+      .is('user_id', null)
       .maybeSingle();
-    if (existing) {
-      await svc.from('linkedin_accounts').update(patch).eq('id', existing.id);
-      accountRowId = existing.id;
+    if (orphan) {
+      await svc.from('linkedin_accounts').update(patch).eq('id', orphan.id);
+      accountRowId = orphan.id;
     }
   }
+
+  // 3) Otherwise create a fresh account row for this user.
   if (!accountRowId) {
-    // No owner match — reuse a row for this exact unipile account if present, else create.
-    const { data: byUnipile } = await svc
+    const { data: created, error } = await svc
       .from('linkedin_accounts')
+      .insert(patch)
       .select('id')
-      .eq('unipile_account_id', unipileAccountId)
-      .maybeSingle();
-    if (byUnipile) {
-      await svc.from('linkedin_accounts').update(patch).eq('id', byUnipile.id);
-      accountRowId = byUnipile.id;
-    } else {
-      const { data: created, error } = await svc
-        .from('linkedin_accounts')
-        .insert(patch)
-        .select('id')
-        .single();
-      if (error || !created) throw new Error(error?.message ?? 'Failed to persist account');
-      accountRowId = created.id;
-    }
+      .single();
+    if (error || !created) throw new Error(error?.message ?? 'Failed to persist account');
+    accountRowId = created.id;
   }
 
   if (!accountRowId) throw new Error('Failed to resolve account');
@@ -107,9 +115,8 @@ export async function finalizeConnection(
     event: 'session_connected',
     detail: { provider: 'unipile', ownerId },
   });
-  log.info('connect', 'connected', { accountId: accountRowId, ownerId });
+  log.info('connect', 'connected', { accountId: accountRowId, ownerId, userId });
 
-  const res = NextResponse.json({ status: 'connected' });
-  res.cookies.set(SESSION_COOKIE, signSession(accountRowId), sessionCookieOptions());
-  return res;
+  // The app-user session cookie is already set (they were signed in to connect).
+  return NextResponse.json({ status: 'connected' });
 }

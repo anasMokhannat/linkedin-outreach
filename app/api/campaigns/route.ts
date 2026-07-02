@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { requireAccountId, HttpError } from '@/lib/auth';
+import { requireAccountId, requireUserId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 
@@ -44,24 +44,43 @@ export async function GET() {
   }
 }
 
-/** POST /api/campaigns  { name, cta, offer, leadIds[] } — create a draft campaign. */
+/** POST /api/campaigns  { name, cta, offerId?, offer?, leadIds[] } — create a draft campaign. */
 export async function POST(req: NextRequest) {
   try {
+    const userId = await requireUserId();
     const accountId = await requireAccountId();
     const body = (await req.json().catch(() => ({}))) as {
       name?: unknown;
       cta?: unknown;
       offer?: unknown;
+      offerId?: unknown;
       leadIds?: unknown;
     };
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const cta = typeof body.cta === 'string' ? body.cta.trim() : '';
-    const offer = typeof body.offer === 'string' ? body.offer.trim() : '';
+    let offer = typeof body.offer === 'string' ? body.offer.trim() : '';
+    const offerId = typeof body.offerId === 'string' ? body.offerId : null;
     const leadIds = Array.isArray(body.leadIds) ? (body.leadIds as string[]).filter((x) => typeof x === 'string') : [];
     if (!name) throw new HttpError(400, 'Campaign name is required.');
     if (leadIds.length === 0) throw new HttpError(400, 'Select at least one lead.');
 
     const svc = createSupabaseServiceClient();
+
+    // Resolve the chosen offer (belongs to the user) into a snapshot text so
+    // generation has the value-prop even if the offer is later edited/deleted.
+    let resolvedOfferId: string | null = null;
+    if (offerId) {
+      const { data: off } = await svc
+        .from('offers')
+        .select('id, name, description')
+        .eq('id', offerId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (off) {
+        resolvedOfferId = off.id;
+        offer = [off.name, off.description].filter(Boolean).join(' — ');
+      }
+    }
 
     // Validate the leads belong to this account.
     const { data: leads } = await svc
@@ -74,7 +93,7 @@ export async function POST(req: NextRequest) {
 
     const { data: campaign, error } = await svc
       .from('campaigns')
-      .insert({ account_id: accountId, name, cta, offer, status: 'draft' })
+      .insert({ account_id: accountId, name, cta, offer, offer_id: resolvedOfferId, status: 'draft' })
       .select('*')
       .single();
     if (error || !campaign) throw new Error(error?.message ?? 'Failed to create campaign');

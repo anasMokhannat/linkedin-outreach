@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { requireAccountId } from '@/lib/auth';
+import { getAccountId } from '@/lib/auth';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { capStatus } from '@/lib/caps';
 import { DAILY_MESSAGE_LIMIT } from '@/lib/limits';
@@ -8,7 +8,30 @@ import { IconUsers, IconSend, IconMail, IconPlus } from '@/app/components/icons'
 export const dynamic = 'force-dynamic';
 
 export default async function OverviewPage() {
-  const accountId = await requireAccountId();
+  const accountId = await getAccountId();
+
+  // LinkedIn not connected yet (the user skipped). Prompt them to connect.
+  if (!accountId) {
+    return (
+      <div>
+        <div className="page-header">
+          <div>
+            <h1>Overview</h1>
+            <div className="sub">Track your LinkedIn outreach &amp; performance</div>
+          </div>
+        </div>
+        <div className="card" style={{ maxWidth: 560 }}>
+          <h2 style={{ marginTop: 0 }}>Connect your LinkedIn</h2>
+          <p className="muted" style={{ fontSize: 14 }}>
+            You haven&apos;t connected a LinkedIn account yet. Connect one to sync your connections,
+            build campaigns, and send messages.
+          </p>
+          <Link className="btn" href="/connect">Connect LinkedIn</Link>
+        </div>
+      </div>
+    );
+  }
+
   const svc = createSupabaseServiceClient();
 
   const today = new Date().toISOString().slice(0, 10);
@@ -124,7 +147,7 @@ export default async function OverviewPage() {
               <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }} />
             </div>
             <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-              Target: <strong>{account?.leads_to_message ?? 0}</strong> leads. <Link href="/settings">Adjust →</Link>
+              Target: <strong>{account?.leads_to_message ?? 0}</strong> leads.
             </p>
           </div>
 

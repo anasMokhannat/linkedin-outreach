@@ -13,6 +13,8 @@ import { serverEnv } from './env';
  */
 
 export const SESSION_COOKIE = 'fl_session';
+/** App-user session cookie (email/password identity), independent of LinkedIn. */
+export const USER_COOKIE = 'fl_user';
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 function b64url(buf: Buffer): string {

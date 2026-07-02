@@ -29,6 +29,29 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       .maybeSingle();
     if (!campaign) throw new HttpError(404, 'Campaign not found.');
 
+    // Company context (per app user) grounds every message in this campaign.
+    const { data: account } = await svc
+      .from('linkedin_accounts')
+      .select('user_id')
+      .eq('id', accountId)
+      .maybeSingle();
+    const { data: user } = account?.user_id
+      ? await svc
+          .from('users')
+          .select('company_name, company_description, company_services, company_usps, company_pain_points')
+          .eq('id', account.user_id)
+          .maybeSingle()
+      : { data: null };
+    const senderCompany = user
+      ? {
+          name: user.company_name,
+          description: user.company_description,
+          services: user.company_services,
+          usps: user.company_usps,
+          painPoints: user.company_pain_points,
+        }
+      : null;
+
     // Leads still needing a message.
     const { data: pending } = await svc
       .from('campaign_leads')
@@ -61,6 +84,7 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
           companyAbout: null,
           senderValueProp: campaign.offer || 'I help teams like yours.',
           senderGoal: campaign.cta || 'Start a genuine conversation.',
+          senderCompany,
         });
 
         const { data: msg, error } = await svc

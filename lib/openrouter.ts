@@ -10,6 +10,14 @@ import { serverEnv, publicEnv } from './env';
 const MESSAGE_HARD_CAP = 900; // spec §0: hard cap
 const MESSAGE_TARGET_MAX = 600; // spec §8: target ceiling
 
+export interface SenderCompany {
+  name?: string | null;
+  description?: string | null;
+  services?: string | null;
+  usps?: string | null;
+  painPoints?: string | null;
+}
+
 export interface GroundingContext {
   firstName?: string | null;
   lastName?: string | null;
@@ -20,12 +28,15 @@ export interface GroundingContext {
   companyAbout?: string | null;
   senderValueProp: string;
   senderGoal: string;
+  senderCompany?: SenderCompany | null;
 }
 
 const SYSTEM_PROMPT =
   'Write a short, warm, specific LinkedIn message to a 1st-degree connection. ' +
-  'Reference one concrete detail from their recent activity or role. No clichés, ' +
-  'no hard pitch. Keep it under 600 characters, plain text. Output only the message body.';
+  'Reference one concrete detail from their recent activity or role. Use the ' +
+  "sender's company context (services, unique selling points, pain points solved) " +
+  'to make the value relevant to this recipient — but subtly, no hard pitch and no ' +
+  'clichés. Keep it under 600 characters, plain text. Output only the message body.';
 
 export interface GenerateResult {
   body: string;
@@ -47,7 +58,19 @@ export async function generateMessage(
       recentPosts: (ctx.recentPosts ?? []).slice(0, 3),
       companyAbout: ctx.companyAbout ?? null,
     },
-    sender: { valueProp: ctx.senderValueProp, goal: ctx.senderGoal },
+    sender: {
+      valueProp: ctx.senderValueProp,
+      goal: ctx.senderGoal,
+      company: ctx.senderCompany
+        ? {
+            name: ctx.senderCompany.name ?? null,
+            description: ctx.senderCompany.description ?? null,
+            services: ctx.senderCompany.services ?? null,
+            uniqueSellingPoints: ctx.senderCompany.usps ?? null,
+            painPointsSolved: ctx.senderCompany.painPoints ?? null,
+          }
+        : null,
+    },
     constraints: { maxChars: MESSAGE_TARGET_MAX, tone: 'warm, specific, no hard pitch' },
   };
 

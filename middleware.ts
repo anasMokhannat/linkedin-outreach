@@ -1,31 +1,24 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Route guard based on the session cookie (presence check only — full HMAC
- * verification happens server-side in the (app) layout / route handlers via
- * getAccountId). Identity is the connected LinkedIn account; there is no
- * separate user auth.
+ * Lightweight route guard: presence check on the app-user session cookie only.
+ * Full HMAC verification + the connect-vs-dashboard decision happen server-side
+ * (root page + (app) layout). Identity is the app user (email/password); the
+ * LinkedIn connection is a separate concern handled after login.
  */
-const SESSION_COOKIE = 'fl_session';
+const USER_COOKIE = 'fl_user';
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const hasSession = !!request.cookies.get(SESSION_COOKIE)?.value;
+  const hasSession = !!request.cookies.get(USER_COOKIE)?.value;
 
-  const isProtected = ['/dashboard', '/leads', '/settings'].some(
+  const isProtected = ['/dashboard', '/leads', '/campaigns', '/inbox', '/settings', '/connect'].some(
     (p) => pathname === p || pathname.startsWith(p + '/')
   );
 
   if (isProtected && !hasSession) {
     const url = request.nextUrl.clone();
-    url.pathname = '/';
-    return NextResponse.redirect(url);
-  }
-
-  // Already connected → skip the connect landing.
-  if (pathname === '/' && hasSession) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = '/login';
     return NextResponse.redirect(url);
   }
 

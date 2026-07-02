@@ -2,23 +2,26 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import Nav from '@/app/components/Nav';
 import Topbar from '@/app/components/Topbar';
-import { getAccountId } from '@/lib/auth';
+import { ConfirmProvider } from '@/app/components/ConfirmDialog';
+import { getUserId, getAccountId } from '@/lib/auth';
 
 /**
- * Authenticated shell. Identity = connected LinkedIn account; if there's no
- * valid session cookie, send the visitor to the connect page (/).
+ * Authenticated shell. Requires an app-user session. Connecting LinkedIn is
+ * optional (users can skip and do it later from Settings); when it isn't
+ * connected we surface a small indicator in the top bar.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
+  const userId = await getUserId();
+  if (!userId) redirect('/login');
   const accountId = await getAccountId();
-  if (!accountId) redirect('/');
 
   return (
-    <>
-      <Topbar />
+    <ConfirmProvider>
+      <Topbar linkedinConnected={!!accountId} />
       <div className="shell">
         <Nav />
         <main className="app-main">{children}</main>
       </div>
-    </>
+    </ConfirmProvider>
   );
 }
