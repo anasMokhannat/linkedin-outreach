@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Logo from '../components/Logo';
+import { IconEye, IconEyeOff } from '../components/icons';
 
 export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -83,26 +85,46 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
         />
         <label>Password</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder={isRegister ? 'At least 8 characters' : ''}
-          autoComplete={isRegister ? 'new-password' : 'current-password'}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-        />
+        <div className="pw-field">
+          <input
+            type={showPw ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={isRegister ? 'At least 8 characters' : ''}
+            autoComplete={isRegister ? 'new-password' : 'current-password'}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          />
+          <button
+            type="button"
+            className="pw-toggle"
+            aria-label={showPw ? 'Hide password' : 'Show password'}
+            onClick={() => setShowPw((v) => !v)}
+          >
+            {showPw ? <IconEyeOff /> : <IconEye />}
+          </button>
+        </div>
 
         {isRegister && (
           <>
             <label>Confirm password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter your password"
-              autoComplete="new-password"
-              onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-            />
+            <div className="pw-field">
+              <input
+                type={showPw ? 'text' : 'password'}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your password"
+                autoComplete="new-password"
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              />
+              <button
+                type="button"
+                className="pw-toggle"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPw((v) => !v)}
+              >
+                {showPw ? <IconEyeOff /> : <IconEye />}
+              </button>
+            </div>
             {passwordsMismatch && (
               <p style={{ color: 'var(--bad)', fontSize: 12.5, margin: '6px 0 0' }}>Passwords do not match.</p>
             )}

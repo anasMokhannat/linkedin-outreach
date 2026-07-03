@@ -6,6 +6,13 @@ import CampaignChat, { type ChatLead } from '@/app/components/CampaignChat';
 export default function InboxPage() {
   const [leads, setLeads] = useState<ChatLead[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [initialLeadId, setInitialLeadId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Deep-link to a specific conversation (e.g. from a reply notification).
+    const p = new URLSearchParams(window.location.search);
+    setInitialLeadId(p.get('lead'));
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -25,7 +32,7 @@ export default function InboxPage() {
           No conversations yet — add leads to a campaign to start messaging them.
         </div>
       ) : (
-        <CampaignChat leads={leads} />
+        <CampaignChat leads={leads} initialLeadId={initialLeadId} />
       )}
     </div>
   );

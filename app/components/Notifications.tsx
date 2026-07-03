@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { IconBell } from './icons';
-import CampaignChat from './CampaignChat';
 
 interface Notif {
   id: string;
@@ -14,15 +14,15 @@ interface Notif {
 }
 
 export default function Notifications() {
+  const router = useRouter();
   const [items, setItems] = useState<Notif[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
-  const [chat, setChat] = useState<{ leadId: string; name: string } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/notifications');
+      const res = await fetch('/api/notifications', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       setItems(data.items ?? []);
@@ -51,7 +51,7 @@ export default function Notifications() {
     const next = !open;
     setOpen(next);
     if (next && unread > 0) {
-      await fetch('/api/notifications/read', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      await fetch('/api/notifications', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
       setUnread(0);
       setItems((p) => p.map((n) => ({ ...n, read: true })));
     }
@@ -86,7 +86,7 @@ export default function Notifications() {
           {items.map((n) => (
             <button
               key={n.id}
-              onClick={() => { if (n.leadId) { setChat({ leadId: n.leadId, name: n.leadName }); setOpen(false); } }}
+              onClick={() => { if (n.leadId) { setOpen(false); router.push(`/inbox?lead=${n.leadId}`); } }}
               style={{
                 display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
                 padding: '11px 14px', borderBottom: '1px solid var(--border)',
@@ -98,20 +98,6 @@ export default function Notifications() {
               <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>{new Date(n.createdAt).toLocaleString()}</div>
             </button>
           ))}
-        </div>
-      )}
-
-      {chat && (
-        <div className="modal-backdrop" onClick={() => setChat(null)}>
-          <div className="modal" style={{ maxWidth: 720, padding: 0 }} onClick={(e) => e.stopPropagation()}>
-            <div className="row" style={{ justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
-              <h2 style={{ margin: 0 }}>{chat.name}</h2>
-              <button className="btn ghost sm" onClick={() => setChat(null)}>Close</button>
-            </div>
-            <div style={{ height: '66vh' }}>
-              <CampaignChat leads={[{ leadId: chat.leadId, name: chat.name }]} />
-            </div>
-          </div>
         </div>
       )}
     </div>

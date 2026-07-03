@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IconSync } from '@/app/components/icons';
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useConfirm } from '@/app/components/ConfirmDialog';
 
 interface Lead {
@@ -19,25 +19,6 @@ interface Lead {
   messageCount: number;
   lastMessageStatus: string | null;
 }
-interface Staged {
-  profileUrl: string;
-  fullName: string;
-  firstName?: string;
-  lastName?: string;
-  headline?: string;
-  company?: string;
-  title?: string;
-  providerId?: string;
-  alreadyLead?: boolean;
-}
-interface Msg {
-  id: string;
-  body: string;
-  status: string;
-  sent_at: string | null;
-  created_at: string;
-  campaignName?: string | null;
-}
 interface CampaignOpt {
   id: string;
   name: string;
@@ -49,39 +30,31 @@ interface Offer {
   description: string | null;
 }
 
-const STALE_MS = 24 * 60 * 60 * 1000;
 function leadName(l: { first_name: string | null; last_name: string | null }) {
   return [l.first_name, l.last_name].filter(Boolean).join(' ') || 'Lead';
 }
-// ICP keyword match: connections only carry a free-text headline pre-enrichment,
-// so every ICP term is matched against the headline (+ name for the name field).
-function matchTerm(haystack: string, term: string) {
-  return !term || haystack.toLowerCase().includes(term.toLowerCase());
+
+const AVATAR_COLORS = ['#2bb3e0', '#4361ee', '#16a34a', '#b45309', '#9333ea', '#db2777', '#0891b2', '#ca8a04'];
+function avatarColor(s: string) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
 }
 
 export default function LeadsPage() {
   const confirm = useConfirm();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
 
-  // Lead (post-enrichment) filters — these hit real columns.
+  // Filters (run on enriched columns)
   const [fIndustry, setFIndustry] = useState('');
   const [fCompany, setFCompany] = useState('');
   const [fTitle, setFTitle] = useState('');
   const [fName, setFName] = useState('');
-
-  // ICP (pre-selection, headline keyword match)
-  const [conns, setConns] = useState<Staged[]>([]);
-  const [connsLoaded, setConnsLoaded] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<string>('none');
-  const [icpIndustry, setIcpIndustry] = useState('');
-  const [icpTitle, setIcpTitle] = useState('');
-  const [icpCompany, setIcpCompany] = useState('');
-  const [icpName, setIcpName] = useState('');
-  const [icpApplied, setIcpApplied] = useState(false);
-  const [selConns, setSelConns] = useState<Set<string>>(new Set());
-  const autoSynced = useRef(false);
 
   // Lead multi-select → campaign
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
@@ -94,8 +67,7 @@ export default function LeadsPage() {
   const [newCta, setNewCta] = useState('');
   const [chosenOffer, setChosenOffer] = useState('');
 
-  // Modals
-  const [msgsModal, setMsgsModal] = useState<{ lead: Lead; items: Msg[] } | null>(null);
+  // Profile drawer
   const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null } | null>(null);
 
   const loadLeads = useCallback(async () => {
@@ -109,111 +81,12 @@ export default function LeadsPage() {
     setLeads(data.leads ?? []);
   }, [fIndustry, fCompany, fTitle, fName]);
 
-  const loadConnections = useCallback(async () => {
-    const res = await fetch('/api/connections');
-    const data = await res.json();
-    setSyncStatus(data.status ?? 'none');
-    setConns(data.connections ?? []);
-    setConnsLoaded(true);
-  }, []);
-
-  const sync = useCallback(async () => {
-    setBusy((p) => ({ ...p, sync: true }));
-    const res = await fetch('/api/sync/connections', { method: 'POST' });
-    const data = await res.json();
-    setBusy((p) => ({ ...p, sync: false }));
-    if (res.ok) {
-      await loadConnections();
-      return true;
-    }
-    setMsg('Sync failed: ' + (data.error ?? res.status));
-    return false;
-  }, [loadConnections]);
-
   useEffect(() => {
     loadLeads();
   }, [loadLeads]);
 
-  // Auto-fetch connections on open when never synced or stale (>24h).
-  useEffect(() => {
-    if (autoSynced.current) return;
-    autoSynced.current = true;
-    (async () => {
-      const res = await fetch('/api/connections?meta=1');
-      const m = await res.json();
-      setSyncStatus(m.status ?? 'none');
-      const stale = !m.lastSyncAt || Date.now() - new Date(m.lastSyncAt).getTime() > STALE_MS;
-      if ((m.count ?? 0) === 0 || stale) {
-        setMsg('Refreshing your connections…');
-        await sync();
-        setMsg(null);
-      } else {
-        loadConnections();
-      }
-    })();
-  }, [sync, loadConnections]);
-
-  function setLeadBusy(id: string, v: boolean) {
-    setBusy((p) => ({ ...p, [id]: v }));
-  }
-
-  // ICP result: AND across the provided terms, all matched on the headline
-  // (name also checks the full name).
-  const icpResults = useMemo(() => {
-    return conns.filter((c) => {
-      const headline = c.headline ?? '';
-      if (!matchTerm(headline, icpIndustry)) return false;
-      if (!matchTerm(headline + ' ' + (c.title ?? ''), icpTitle)) return false;
-      if (!matchTerm(headline + ' ' + (c.company ?? ''), icpCompany)) return false;
-      if (!matchTerm(c.fullName, icpName)) return false;
-      return true;
-    });
-  }, [conns, icpIndustry, icpTitle, icpCompany, icpName]);
-
-  const hasIcp = !!(icpIndustry || icpTitle || icpCompany || icpName);
-
-  function applyIcp() {
-    setIcpApplied(true);
-    setSelConns(new Set());
-  }
-  function resetIcp() {
-    setIcpIndustry(''); setIcpTitle(''); setIcpCompany(''); setIcpName('');
-    setIcpApplied(false); setSelConns(new Set());
-  }
-  function toggleConn(url: string) {
-    setSelConns((p) => { const n = new Set(p); n.has(url) ? n.delete(url) : n.add(url); return n; });
-  }
-  const eligibleUrls = useMemo(
-    () => icpResults.filter((c) => !c.alreadyLead).map((c) => c.profileUrl),
-    [icpResults]
-  );
-  const allSelected = eligibleUrls.length > 0 && eligibleUrls.every((u) => selConns.has(u));
-
-  function toggleSelectAll() {
-    setSelConns(allSelected ? new Set() : new Set(eligibleUrls));
-  }
   function toggleLead(id: string) {
     setSelLeads((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
-
-  async function addSelectedConns() {
-    const chosen = icpResults.filter((c) => selConns.has(c.profileUrl) && !c.alreadyLead);
-    if (!chosen.length) return setMsg('Nothing new selected.');
-    setBusy((p) => ({ ...p, addConns: true }));
-    setMsg(`Adding ${chosen.length} lead(s) and enriching…`);
-    const res = await fetch('/api/leads/select', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ connections: chosen }),
-    });
-    const data = await res.json();
-    setBusy((p) => ({ ...p, addConns: false }));
-    if (!res.ok) setMsg('Save failed: ' + (data.error ?? res.status));
-    else {
-      setMsg(`Added ${data.inserted} lead(s)${typeof data.enriched === 'number' ? ` · enriched ${data.enriched}` : ''}.`);
-      setSelConns(new Set());
-      loadConnections();
-      loadLeads();
-    }
   }
 
   async function openCampaignModal() {
@@ -255,23 +128,15 @@ export default function LeadsPage() {
     }
   }
 
-  async function enrich(id: string) {
-    setMsg(null); setLeadBusy(id, true);
-    const res = await fetch(`/api/leads/${id}/enrich`, { method: 'POST' });
-    const data = await res.json();
-    setLeadBusy(id, false);
-    if (!res.ok) setMsg('Enrich failed: ' + (data.error ?? res.status));
-    else { setMsg('Enriched.'); loadLeads(); }
-  }
-  async function openMessages(lead: Lead) {
-    const res = await fetch(`/api/leads/${lead.id}/messages`);
-    const data = await res.json();
-    setMsgsModal({ lead, items: data.messages ?? [] });
-  }
   async function openProfile(lead: Lead) {
     const res = await fetch(`/api/leads/${lead.id}`);
     const data = await res.json();
     setProfileModal({ lead, enrichment: data.enrichment });
+  }
+  function addOneToCampaign(leadId: string) {
+    setSelLeads(new Set([leadId]));
+    setProfileModal(null);
+    openCampaignModal();
   }
   async function removeLead(id: string) {
     if (!(await confirm({ title: 'Delete lead', message: 'Delete this lead?', confirmLabel: 'Delete', danger: true }))) return;
@@ -279,109 +144,31 @@ export default function LeadsPage() {
     loadLeads();
   }
 
-  const badge = (s: string | null) =>
-    s === 'sent' ? 'good' : s === 'failed' || s === 'rejected' ? 'bad' : s === 'approved' ? 'warn' : 'plain';
-
-  const eligibleCount = icpResults.filter((c) => !c.alreadyLead).length;
-
   return (
     <div>
       <div className="page-header">
         <div>
           <h1>Leads</h1>
-          <div className="sub">Define your ICP, pull matching connections, enrich &amp; contact</div>
+          <div className="sub">Your saved, enriched connections — filter and add them to campaigns</div>
         </div>
         <div className="spacer" />
-        <button className="btn ghost" onClick={sync} disabled={busy.sync}>
-          <IconSync /> {busy.sync ? 'Syncing…' : 'Re-sync'}
-        </button>
+        <Link className="btn" href="/connections">Find more leads →</Link>
       </div>
 
       {msg && <div className="notice">{msg}</div>}
 
-      {/* ICP form */}
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Your ideal customer profile</h2>
-        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-          Describe who you want to reach. Terms are matched against each connection&apos;s LinkedIn
-          headline. {syncStatus === 'none' ? 'No connections synced yet — hit Re-sync.' : `${conns.length} connections available.`}
-        </p>
-        <div className="grid cols-3" style={{ gap: 10 }}>
-          <div>
-            <label>Industry</label>
-            <input placeholder="e.g. SaaS, fintech" value={icpIndustry} onChange={(e) => setIcpIndustry(e.target.value)} />
-          </div>
-          <div>
-            <label>Title / role</label>
-            <input placeholder="e.g. founder, head of sales" value={icpTitle} onChange={(e) => setIcpTitle(e.target.value)} />
-          </div>
-          <div>
-            <label>Company</label>
-            <input placeholder="e.g. Stripe" value={icpCompany} onChange={(e) => setIcpCompany(e.target.value)} />
-          </div>
-          <div>
-            <label>Name</label>
-            <input placeholder="Search by name" value={icpName} onChange={(e) => setIcpName(e.target.value)} />
-          </div>
-        </div>
-        <div className="row" style={{ marginTop: 12, gap: 8 }}>
-          <button className="btn" onClick={applyIcp} disabled={!connsLoaded}>Show matching connections</button>
-          {icpApplied && <button className="btn ghost" onClick={resetIcp}>Reset</button>}
-          {icpApplied && (
-            <span className="muted">{icpResults.length} match{icpResults.length === 1 ? '' : 'es'} · {eligibleCount} new</span>
-          )}
-        </div>
-      </div>
-
-      {/* ICP results */}
-      {icpApplied && (
-        <div className="card">
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <h2 style={{ margin: 0 }}>Matching connections</h2>
-            <div className="row" style={{ gap: 8 }}>
-              <button className="btn ghost sm" onClick={toggleSelectAll} disabled={eligibleCount === 0}>{allSelected ? 'Deselect all' : 'Select all new'}</button>
-              <button className="btn" onClick={addSelectedConns} disabled={selConns.size === 0 || busy.addConns}>
-                {busy.addConns ? 'Adding…' : `Add ${selConns.size || ''} to leads`}
-              </button>
-            </div>
-          </div>
-          {!hasIcp && <p className="muted" style={{ fontSize: 13 }}>No ICP terms set — showing all connections.</p>}
-          <div className="table-wrap" style={{ maxHeight: 340, overflowY: 'auto', marginTop: 10 }}>
-            <table>
-              <thead><tr><th></th><th>Name</th><th>Headline</th></tr></thead>
-              <tbody>
-                {icpResults.slice(0, 300).map((c) => (
-                  <tr key={c.profileUrl}>
-                    <td style={{ width: 36 }}>
-                      {c.alreadyLead ? <span className="badge good">✓</span> :
-                        <input type="checkbox" style={{ width: 'auto' }} checked={selConns.has(c.profileUrl)} onChange={() => toggleConn(c.profileUrl)} />}
-                    </td>
-                    <td><a href={c.profileUrl} target="_blank" rel="noreferrer">{c.fullName}</a></td>
-                    <td className="muted">{c.headline ?? '—'}</td>
-                  </tr>
-                ))}
-                {icpResults.length === 0 && <tr><td colSpan={3} className="muted">No connections match this ICP.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          {icpResults.length > 300 && <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Showing first 300 of {icpResults.length}. Narrow your ICP to see the rest.</p>}
-        </div>
-      )}
-
-      {/* Lead filters */}
+      {/* Filters */}
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
           <h2 style={{ margin: 0 }}>Filter your leads</h2>
           <span className="muted" style={{ fontSize: 12 }}>Filters run on enriched fields.</span>
         </div>
-        <div className="grid cols-3" style={{ gap: 10 }}>
-          <input placeholder="Industry" value={fIndustry} onChange={(e) => setFIndustry(e.target.value)} />
-          <input placeholder="Company" value={fCompany} onChange={(e) => setFCompany(e.target.value)} />
-          <input placeholder="Title" value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
-          <input placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} />
-        </div>
-        <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn secondary" onClick={loadLeads}>Apply filters</button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input style={{ flex: '1 1 150px' }} placeholder="Industry" value={fIndustry} onChange={(e) => setFIndustry(e.target.value)} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Company" value={fCompany} onChange={(e) => setFCompany(e.target.value)} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Title" value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} />
+          <button className="btn" onClick={loadLeads} style={{ flexShrink: 0 }}>Apply filters</button>
         </div>
       </div>
 
@@ -396,36 +183,48 @@ export default function LeadsPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th></th><th>Name</th><th>Title / Company</th><th>Industry</th><th>Email</th><th>Messages</th><th>Actions</th></tr>
+              <tr><th style={{ width: 32 }}></th><th>Lead</th><th>Company</th><th>Email</th><th>Enrichment</th></tr>
             </thead>
             <tbody>
-              {leads.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ width: 32 }}><input type="checkbox" style={{ width: 'auto' }} checked={selLeads.has(l.id)} onChange={() => toggleLead(l.id)} /></td>
-                  <td>
-                    <a href={l.profile_url} target="_blank" rel="noreferrer">{leadName(l)}</a>
-                    {!l.enriched_at && <span className="badge plain" style={{ marginLeft: 6, fontSize: 10 }}>not enriched</span>}
-                  </td>
-                  <td className="muted">{l.current_title ?? '—'}{l.current_company ? ` · ${l.current_company}` : ''}</td>
-                  <td className="muted">{l.industry ?? '—'}</td>
-                  <td className="muted" style={{ fontSize: 13 }}>
-                    {l.email ? <a href={`mailto:${l.email}`}>{l.email}</a> : '—'}
-                  </td>
-                  <td>
-                    {l.messageCount > 0 ? (
-                      <button className="btn ghost sm" onClick={() => openMessages(l)}>View ({l.messageCount})</button>
-                    ) : <span className="muted">—</span>}
-                  </td>
-                  <td>
-                    <div className="row" style={{ gap: 6 }}>
-                      <button className="btn secondary sm" onClick={() => enrich(l.id)} disabled={busy[l.id]}>{busy[l.id] ? '…' : 'Enrich'}</button>
-                      {l.enriched_at && <button className="btn secondary sm" onClick={() => openProfile(l)}>Profile</button>}
-                      <button className="btn ghost sm" onClick={() => removeLead(l.id)}>✕</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {leads.length === 0 && <tr><td colSpan={7} className="muted">No leads yet — define your ICP above and add matching connections.</td></tr>}
+              {leads.map((l) => {
+                const name = leadName(l);
+                return (
+                  <tr key={l.id} onClick={() => openProfile(l)} style={{ cursor: 'pointer' }}>
+                    <td style={{ width: 32 }} onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" style={{ width: 'auto' }} checked={selLeads.has(l.id)} onChange={() => toggleLead(l.id)} />
+                    </td>
+                    <td>
+                      <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                        <span className="avatar-c" style={{ width: 34, height: 34, fontSize: 12, background: avatarColor(name) }}>{initials(name)}</span>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ display: 'block', fontWeight: 600 }}>{name}</span>
+                          <span className="muted" style={{ display: 'block', fontSize: 12.5 }}>{l.current_title ?? '—'}</span>
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ display: 'block', fontWeight: 550 }}>{l.current_company ?? '—'}</span>
+                      {l.industry && <span className="muted" style={{ display: 'block', fontSize: 12.5 }}>{l.industry}</span>}
+                    </td>
+                    <td className="muted" style={{ fontSize: 13 }}>
+                      {l.email ? (
+                        <span className="row" style={{ gap: 6 }}>
+                          <span style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--good)', flexShrink: 0 }} />
+                          {l.email}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td>
+                      {l.enriched_at
+                        ? <span className="badge good">Done</span>
+                        : <span className="badge plain">None</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {leads.length === 0 && (
+                <tr><td colSpan={5} className="muted">No leads yet — head to <Link href="/connections">Connections</Link> to add matching connections.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -460,7 +259,7 @@ export default function LeadsPage() {
                 <label>Offer</label>
                 {offers.length === 0 ? (
                   <p className="muted" style={{ fontSize: 13 }}>
-                    No offers yet — add them in <a href="/settings">Settings</a> to ground your messages.
+                    No offers yet — add them in <Link href="/settings">Settings</Link> to ground your messages.
                   </p>
                 ) : (
                   <select value={chosenOffer} onChange={(e) => setChosenOffer(e.target.value)}>
@@ -477,71 +276,153 @@ export default function LeadsPage() {
         </div>
       )}
 
-      {/* Messages modal */}
-      {msgsModal && (
-        <div className="modal-backdrop" onClick={() => setMsgsModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <h2 style={{ margin: 0 }}>Messages · {leadName(msgsModal.lead)}</h2>
-              <button className="btn ghost sm" onClick={() => setMsgsModal(null)}>Close</button>
-            </div>
-            {msgsModal.items.length === 0 && <p className="muted">No messages yet. Add this lead to a campaign to generate and send messages.</p>}
-            {msgsModal.items.map((m) => (
-              <div key={m.id} className="card" style={{ boxShadow: 'none', marginTop: 12 }}>
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span className="row" style={{ gap: 8 }}>
-                    <span className={`badge ${badge(m.status)}`}>{m.status}</span>
-                    {m.campaignName && <span className="badge plain">{m.campaignName}</span>}
-                  </span>
-                  <span className="muted" style={{ fontSize: 12 }}>{m.sent_at ? `sent ${new Date(m.sent_at).toLocaleString()}` : new Date(m.created_at).toLocaleString()}</span>
-                </div>
-                <p style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{m.body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Profile modal */}
+      {/* Profile drawer */}
       {profileModal && (
-        <div className="modal-backdrop" onClick={() => setProfileModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <h2 style={{ margin: 0 }}>{leadName(profileModal.lead)}</h2>
-              <button className="btn ghost sm" onClick={() => setProfileModal(null)}>Close</button>
-            </div>
-            <ProfileDetail enrichment={profileModal.enrichment} email={profileModal.lead.email} />
-          </div>
-        </div>
+        <LeadDrawer
+          lead={profileModal.lead}
+          enrichment={profileModal.enrichment}
+          onClose={() => setProfileModal(null)}
+          onAddToCampaign={() => addOneToCampaign(profileModal.lead.id)}
+          onDelete={async () => { await removeLead(profileModal.lead.id); setProfileModal(null); }}
+        />
       )}
     </div>
   );
 }
 
-function ProfileDetail({ enrichment, email }: { enrichment: Record<string, unknown> | null; email: string | null }) {
-  if (!enrichment) return <p className="muted">Not enriched yet.</p>;
-  const exp = (enrichment.experiences as Array<Record<string, string>>) ?? [];
-  const edu = (enrichment.education as Array<Record<string, string>>) ?? [];
-  const skills = (enrichment.skills as string[]) ?? [];
-  const posts = (enrichment.recent_posts as Array<{ text?: string }>) ?? [];
-  const summary = enrichment.summary as string | null;
+function Field({ k, v }: { k: string; v: string | null | undefined }) {
+  if (!v) return null;
   return (
-    <div style={{ marginTop: 10 }}>
-      {email && <p style={{ margin: '0 0 8px' }}><strong>Email:</strong> <a href={`mailto:${email}`}>{email}</a></p>}
-      {summary && <p className="muted">{summary}</p>}
-      <h2 style={{ marginTop: 16 }}>Experience</h2>
-      {exp.length === 0 ? <p className="muted">—</p> : exp.map((e, i) => (
-        <div key={i} style={{ marginBottom: 8 }}>
-          <strong>{e.title ?? 'Role'}</strong>{e.company ? ` · ${e.company}` : ''}
-          <div className="muted" style={{ fontSize: 13 }}>{[e.start, e.end].filter(Boolean).join(' – ')}{e.location ? ` · ${e.location}` : ''}</div>
-        </div>
-      ))}
-      <h2 style={{ marginTop: 16 }}>Education</h2>
-      {edu.length === 0 ? <p className="muted">—</p> : edu.map((e, i) => (
-        <div key={i} style={{ marginBottom: 6 }}><strong>{e.school ?? 'School'}</strong><div className="muted" style={{ fontSize: 13 }}>{[e.degree, e.field].filter(Boolean).join(', ')}</div></div>
-      ))}
-      {skills.length > 0 && (<><h2 style={{ marginTop: 16 }}>Skills</h2><div className="row" style={{ gap: 6 }}>{skills.slice(0, 30).map((s, i) => <span key={i} className="badge plain">{s}</span>)}</div></>)}
-      {posts.length > 0 && (<><h2 style={{ marginTop: 16 }}>Recent posts</h2>{posts.slice(0, 3).map((p, i) => <p key={i} className="muted" style={{ fontSize: 13 }}>“{(p.text ?? '').slice(0, 200)}”</p>)}</>)}
+    <div className="drawer-field">
+      <div className="k">{k}</div>
+      <div className="v">{v}</div>
     </div>
+  );
+}
+
+function LeadDrawer({
+  lead,
+  enrichment,
+  onClose,
+  onAddToCampaign,
+  onDelete,
+}: {
+  lead: Lead;
+  enrichment: Record<string, unknown> | null;
+  onClose: () => void;
+  onAddToCampaign: () => void;
+  onDelete: () => void;
+}) {
+  const name = leadName(lead);
+  const exp = (enrichment?.experiences as Array<Record<string, string>>) ?? [];
+  const edu = (enrichment?.education as Array<Record<string, string>>) ?? [];
+  const skills = (enrichment?.skills as string[]) ?? [];
+  const posts = (enrichment?.recent_posts as Array<{ text?: string; url?: string }>) ?? [];
+  const summary = (enrichment?.summary as string | null) ?? null;
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <aside className="drawer" role="dialog" aria-label={`${name} profile`}>
+        <div className="drawer-head">
+          <span className="avatar-c" style={{ width: 44, height: 44, fontSize: 15, background: avatarColor(name) }}>{initials(name)}</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 16, lineHeight: 1.2 }}>{name}</div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+              {[lead.current_title, lead.current_company].filter(Boolean).join(' · ') || lead.headline || '—'}
+            </div>
+          </div>
+          <button className="btn ghost sm" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
+        <div className="drawer-body">
+          {/* Contact chips */}
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            {lead.email && <a className="chip" href={`mailto:${lead.email}`}>✉ {lead.email}</a>}
+            <a className="chip" href={lead.profile_url} target="_blank" rel="noreferrer">in · LinkedIn ↗</a>
+          </div>
+
+          {/* Quick facts */}
+          <div className="drawer-section-title">General</div>
+          <div className="drawer-grid">
+            <Field k="Title" v={lead.current_title} />
+            <Field k="Company" v={lead.current_company} />
+            <Field k="Industry" v={lead.industry} />
+            <Field k="Location" v={lead.location} />
+            <Field k="Email" v={lead.email} />
+            <Field k="Enriched" v={lead.enriched_at ? new Date(lead.enriched_at).toLocaleDateString() : 'Not enriched'} />
+          </div>
+
+          {lead.headline && (
+            <>
+              <div className="drawer-section-title">Headline</div>
+              <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>{lead.headline}</p>
+            </>
+          )}
+
+          {summary && (
+            <>
+              <div className="drawer-section-title">About</div>
+              <p className="muted" style={{ fontSize: 13.5, margin: 0, whiteSpace: 'pre-wrap' }}>{summary}</p>
+            </>
+          )}
+
+          {exp.length > 0 && (
+            <>
+              <div className="drawer-section-title">Experience</div>
+              {exp.map((e, i) => (
+                <div key={i} style={{ marginBottom: 10 }}>
+                  <strong style={{ fontSize: 14 }}>{e.title ?? 'Role'}</strong>{e.company ? ` · ${e.company}` : ''}
+                  <div className="muted" style={{ fontSize: 12.5 }}>
+                    {[e.start, e.end].filter(Boolean).join(' – ')}{e.location ? ` · ${e.location}` : ''}
+                  </div>
+                  {e.description && <div className="muted" style={{ fontSize: 12.5, marginTop: 3, whiteSpace: 'pre-wrap' }}>{e.description}</div>}
+                </div>
+              ))}
+            </>
+          )}
+
+          {edu.length > 0 && (
+            <>
+              <div className="drawer-section-title">Education</div>
+              {edu.map((e, i) => (
+                <div key={i} style={{ marginBottom: 8 }}>
+                  <strong style={{ fontSize: 14 }}>{e.school ?? 'School'}</strong>
+                  <div className="muted" style={{ fontSize: 12.5 }}>{[e.degree, e.field].filter(Boolean).join(', ')}{[e.start, e.end].filter(Boolean).length ? ` · ${[e.start, e.end].filter(Boolean).join(' – ')}` : ''}</div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {skills.length > 0 && (
+            <>
+              <div className="drawer-section-title">Skills</div>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                {skills.slice(0, 40).map((s, i) => <span key={i} className="badge plain">{s}</span>)}
+              </div>
+            </>
+          )}
+
+          {posts.length > 0 && (
+            <>
+              <div className="drawer-section-title">Recent posts</div>
+              {posts.slice(0, 5).map((p, i) => (
+                <p key={i} className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+                  “{(p.text ?? '').slice(0, 240)}{(p.text ?? '').length > 240 ? '…' : ''}”
+                  {p.url && <> · <a href={p.url} target="_blank" rel="noreferrer">view</a></>}
+                </p>
+              ))}
+            </>
+          )}
+
+          {!enrichment && <p className="muted" style={{ fontSize: 13, marginTop: 18 }}>Not enriched yet — no deep profile data available.</p>}
+        </div>
+
+        <div className="drawer-foot row" style={{ gap: 8 }}>
+          <button className="btn ghost" onClick={onDelete}>Delete</button>
+          <button className="btn" style={{ flex: 1 }} onClick={onAddToCampaign}>Add to Campaign →</button>
+        </div>
+      </aside>
+    </>
   );
 }

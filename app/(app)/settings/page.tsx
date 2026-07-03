@@ -43,6 +43,14 @@ export default function SettingsPage() {
     setLinkedinStatus(data.linkedin?.status ?? 'disconnected');
   }
 
+  // After connecting LinkedIn from here, also refresh server components (the app
+  // shell's "not connected" chip + the dashboard prompt) so they update without
+  // a manual page reload.
+  async function onLinkedinConnected() {
+    await loadSettings();
+    router.refresh();
+  }
+
   useEffect(() => {
     loadSettings();
     loadOffers();
@@ -175,7 +183,7 @@ export default function SettingsPage() {
         {linkedinConnected ? (
           <button className="btn danger" onClick={disconnect}>Disconnect LinkedIn</button>
         ) : (
-          <ConnectForm embedded onConnected={loadSettings} />
+          <ConnectForm embedded onConnected={onLinkedinConnected} />
         )}
       </div>
     </div>
