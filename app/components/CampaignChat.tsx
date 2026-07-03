@@ -37,8 +37,8 @@ function timeLabel(at: string | null) {
   return at ? new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
 }
 
-export default function CampaignChat({ leads }: { leads: ChatLead[] }) {
-  const [active, setActive] = useState<string | null>(leads[0]?.leadId ?? null);
+export default function CampaignChat({ leads, initialLeadId }: { leads: ChatLead[]; initialLeadId?: string | null }) {
+  const [active, setActive] = useState<string | null>(initialLeadId ?? leads[0]?.leadId ?? null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasChat, setHasChat] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -57,6 +57,11 @@ export default function CampaignChat({ leads }: { leads: ChatLead[] }) {
     setHasChat(data.hasChat ?? false);
     setLoading(false);
   }, []);
+
+  // Open a specific lead when asked (e.g. arriving from a notification).
+  useEffect(() => {
+    if (initialLeadId) setActive(initialLeadId);
+  }, [initialLeadId]);
 
   useEffect(() => {
     if (active) load(active);

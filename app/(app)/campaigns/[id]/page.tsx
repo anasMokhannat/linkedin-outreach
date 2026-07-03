@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useConfirm } from '@/app/components/ConfirmDialog';
 
@@ -27,6 +28,17 @@ interface Usage {
   weeklyRemaining: number;
 }
 
+const AVATAR_COLORS = ['#2bb3e0', '#4361ee', '#16a34a', '#b45309', '#9333ea', '#db2777', '#0891b2', '#ca8a04'];
+function avatarColor(s: string) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
+}
+
 export default function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -38,6 +50,7 @@ export default function CampaignDetail() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Record<string, string>>({});
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/campaigns/${id}`);
@@ -126,125 +139,143 @@ export default function CampaignDetail() {
   const counts = leads.reduce<Record<string, number>>((a, l) => ({ ...a, [l.status]: (a[l.status] ?? 0) + 1 }), {});
   const name = (l: CLead['leads']) => [l?.first_name, l?.last_name].filter(Boolean).join(' ') || 'Lead';
   const badge = (s: string) => (s === 'sent' ? 'good' : s === 'failed' ? 'bad' : s === 'approved' ? 'warn' : 'plain');
+  const effectiveId = activeId ?? leads[0]?.id ?? null;
+  const activeLead = leads.find((l) => l.id === effectiveId) ?? null;
+  const isEditing = !!(effectiveId && effectiveId in editing);
 
   return (
     <div>
-      {/* Compact campaign toolbar */}
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14, gap: 10 }}>
-        <div className="row" style={{ gap: 10, minWidth: 0 }}>
-          <h1 style={{ fontSize: 19, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campaign.name}</h1>
-          <span className={`badge ${campaign.status === 'active' ? 'good' : campaign.status === 'paused' ? 'warn' : 'plain'}`}>{campaign.status}</span>
+      {/* Header */}
+      <div className="page-header">
+        <div>
+          <div className="row" style={{ gap: 10 }}>
+            <h1 style={{ margin: 0 }}>{campaign.name}</h1>
+            <span className={`badge ${campaign.status === 'active' ? 'good' : campaign.status === 'paused' ? 'warn' : 'plain'}`} style={{ alignSelf: 'center' }}>{campaign.status}</span>
+          </div>
         </div>
-        <button className="btn ghost sm" onClick={remove}>Delete</button>
+        <div className="spacer" />
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {!!(counts.pending || counts.failed) && (
+            <button className="btn secondary" onClick={generate} disabled={busy}>Generate messages</button>
+          )}
+          {['draft', 'paused'].includes(campaign.status) && (counts.approved > 0 || counts.generated > 0) && (
+            <button className="btn" onClick={() => setStatus(campaign.status === 'paused' ? 'resume' : 'activate')} disabled={busy}>
+              {campaign.status === 'paused' ? 'Resume & send' : 'Activate & send'}
+            </button>
+          )}
+          {campaign.status === 'active' && (
+            <>
+              <button className="btn" onClick={sendNow} disabled={busy}>Send now</button>
+              <button className="btn secondary" onClick={() => setStatus('pause')} disabled={busy}>Pause</button>
+            </>
+          )}
+          {['draft', 'active', 'paused'].includes(campaign.status) && (
+            <button className="btn ghost" onClick={() => setStatus('cancel')} disabled={busy}>Cancel</button>
+          )}
+          <button className="btn ghost" onClick={remove}>Delete</button>
+        </div>
       </div>
 
       {msg && <div className="notice">{msg}</div>}
 
-      <div className="split">
-        <div>
-          <div className="card">
-            <h2>Targeting</h2>
-            <p><strong>CTA:</strong> <span className="muted">{campaign.cta || '—'}</span></p>
-            <p><strong>Offer:</strong> <span className="muted">{campaign.offer || '—'}</span></p>
-            <div className="row" style={{ marginTop: 12, gap: 8 }}>
-              {!!(counts.pending || counts.failed) && (
-                <button className="btn secondary" onClick={generate} disabled={busy}>Generate messages</button>
-              )}
-              {['draft', 'paused'].includes(campaign.status) && (counts.approved > 0 || counts.generated > 0) && (
-                <button className="btn" onClick={() => setStatus(campaign.status === 'paused' ? 'resume' : 'activate')} disabled={busy}>
-                  {campaign.status === 'paused' ? 'Resume & send' : 'Activate & send'}
-                </button>
-              )}
-              {campaign.status === 'active' && (
-                <>
-                  <button className="btn" onClick={sendNow} disabled={busy}>Send now</button>
-                  <button className="btn secondary" onClick={() => setStatus('pause')} disabled={busy}>Pause</button>
-                </>
-              )}
-              {['draft', 'active', 'paused'].includes(campaign.status) && (
-                <button className="btn ghost" onClick={() => setStatus('cancel')} disabled={busy}>Cancel</button>
-              )}
+      {/* Context bar: CTA / offer + sending usage */}
+      <div className="card" style={{ display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <div style={{ minWidth: 0, flex: '1 1 340px' }}>
+          <p style={{ margin: 0 }}><strong>CTA:</strong> <span className="muted">{campaign.cta || '—'}</span></p>
+          <p style={{ margin: '6px 0 0' }}><strong>Offer:</strong> <span className="muted">{campaign.offer || '—'}</span></p>
+        </div>
+        {usage && (
+          <div style={{ flex: '0 0 220px' }}>
+            <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}>
+              <span className="muted">Today</span><strong>{usage.sentToday} / {limits.daily}</strong>
             </div>
-            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-              <span className="badge plain">{counts.pending ?? 0} pending</span>
-              <span className="badge plain">{counts.generated ?? 0} drafted</span>
-              <span className="badge warn">{counts.approved ?? 0} queued</span>
-              <span className="badge good">{counts.sent ?? 0} sent</span>
-              {counts.failed ? <span className="badge bad">{counts.failed} failed</span> : null}
-              {counts.skipped ? <span className="badge plain">{counts.skipped} skipped</span> : null}
+            <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, margin: '5px 0 10px', overflow: 'hidden' }}>
+              <div style={{ width: `${Math.min(100, (usage.sentToday / limits.daily) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,var(--accent),var(--accent-2))' }} />
+            </div>
+            <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}>
+              <span className="muted">This week</span><strong>{usage.sentThisWeek} / {limits.weekly}</strong>
+            </div>
+            <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, marginTop: 5, overflow: 'hidden' }}>
+              <div style={{ width: `${Math.min(100, (usage.sentThisWeek / limits.weekly) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,var(--accent),var(--accent-2))' }} />
             </div>
           </div>
+        )}
+      </div>
 
-          <div className="card" style={{ marginBottom: 0 }}>
-            <h2>Leads</h2>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Name</th><th>Message</th><th>Status</th><th>Review</th></tr></thead>
-                <tbody>
-                  {leads.map((l) => (
-                    <tr key={l.id}>
-                      <td>
-                        <a href={l.leads?.profile_url} target="_blank" rel="noreferrer">{name(l.leads)}</a>
-                        <div className="muted" style={{ fontSize: 12 }}>{l.leads?.current_title ?? ''}{l.leads?.current_company ? ` · ${l.leads.current_company}` : ''}</div>
-                      </td>
-                      <td className="muted" style={{ fontSize: 13, maxWidth: 360 }}>
-                        {l.id in editing ? (
-                          <textarea rows={4} value={editing[l.id]} onChange={(e) => setEditing((p) => ({ ...p, [l.id]: e.target.value }))} />
-                        ) : (
-                          l.messages?.body ? l.messages.body.slice(0, 160) + (l.messages.body.length > 160 ? '…' : '') : '—'
-                        )}
-                      </td>
-                      <td>
-                        <span className={`badge ${badge(l.status)}`}>{l.status}</span>
-                        {l.sent_at && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{new Date(l.sent_at).toLocaleString()}</div>}
-                      </td>
-                      <td>
-                        {l.id in editing ? (
-                          <div className="row" style={{ gap: 6 }}>
-                            <button className="btn sm" disabled={!editing[l.id].trim()} onClick={() => review(l.id, 'edit', editing[l.id].trim())}>Save</button>
-                            <button className="btn ghost sm" onClick={() => setEditing((p) => { const n = { ...p }; delete n[l.id]; return n; })}>Cancel</button>
-                          </div>
-                        ) : (l.status === 'generated' || l.status === 'approved') ? (
-                          <div className="row" style={{ gap: 6 }}>
-                            {l.status === 'generated' && <button className="btn sm" onClick={() => review(l.id, 'approve')}>Approve</button>}
-                            {l.messages?.body && <button className="btn secondary sm" onClick={() => setEditing((p) => ({ ...p, [l.id]: l.messages!.body }))}>Edit</button>}
-                            <button className="btn ghost sm" onClick={() => review(l.id, 'skip')}>Skip</button>
-                          </div>
-                        ) : <span className="muted">—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      {/* Master-detail: contacts | message */}
+      <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--r-card)', overflow: 'hidden', background: 'var(--surface)', boxShadow: 'var(--shadow-sm)', height: 'calc(100vh - var(--topbar-h) - 330px)', minHeight: 440 }}>
+        {/* Contacts */}
+        <div style={{ width: 300, flexShrink: 0, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>
+            {leads.length} contact{leads.length === 1 ? '' : 's'}
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            {leads.map((l) => {
+              const nm = name(l.leads);
+              return (
+                <button key={l.id} className={`chat-item ${effectiveId === l.id ? 'on' : ''}`} onClick={() => setActiveId(l.id)}>
+                  <span className="avatar-c" style={{ width: 34, height: 34, fontSize: 12, background: avatarColor(nm) }}>{initials(nm)}</span>
+                  <span style={{ minWidth: 0, flex: 1 }}>
+                    <span style={{ display: 'block', fontWeight: 600, fontSize: 14, color: effectiveId === l.id ? 'var(--accent)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nm}</span>
+                    <span className="muted" style={{ display: 'block', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.leads?.current_company || l.leads?.current_title || ''}</span>
+                  </span>
+                  <span className={`badge ${badge(l.status)}`} style={{ flexShrink: 0, fontSize: 10 }}>{l.status}</span>
+                </button>
+              );
+            })}
+            {leads.length === 0 && <p className="muted" style={{ padding: 16, fontSize: 13 }}>No leads in this campaign.</p>}
           </div>
         </div>
 
-        <div className="card">
-          <h2>Sending limits</h2>
-          <p className="muted" style={{ fontSize: 13 }}>App-enforced, not editable.</p>
-          {usage && (
-            <>
-              <div style={{ marginTop: 10 }}>
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span>Today</span><strong>{usage.sentToday} / {limits.daily}</strong>
+        {/* Message detail */}
+        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
+          {activeLead ? (
+            <div style={{ padding: '20px 24px' }}>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                <div className="row" style={{ gap: 12, minWidth: 0 }}>
+                  <span className="avatar-c" style={{ width: 46, height: 46, fontSize: 16, background: avatarColor(name(activeLead.leads)) }}>{initials(name(activeLead.leads))}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 17 }}>{name(activeLead.leads)}</div>
+                    <div className="muted" style={{ fontSize: 13 }}>{[activeLead.leads?.current_title, activeLead.leads?.current_company].filter(Boolean).join(' · ') || '—'}</div>
+                    {activeLead.leads?.profile_url && <a href={activeLead.leads.profile_url} target="_blank" rel="noreferrer" style={{ fontSize: 12.5 }}>View LinkedIn ↗</a>}
+                  </div>
                 </div>
-                <div style={{ height: 8, background: 'var(--surface-2)', borderRadius: 999, marginTop: 6, overflow: 'hidden' }}>
-                  <div style={{ width: `${Math.min(100, (usage.sentToday / limits.daily) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,var(--accent),var(--accent-2))' }} />
-                </div>
+                <span className={`badge ${badge(activeLead.status)}`}>{activeLead.status}</span>
               </div>
-              <div style={{ marginTop: 14 }}>
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span>This week</span><strong>{usage.sentThisWeek} / {limits.weekly}</strong>
+
+              {activeLead.status === 'approved' && <div className="notice good" style={{ marginTop: 14 }}>Approved — will send on schedule.</div>}
+              {activeLead.sent_at && <p className="muted" style={{ fontSize: 12.5, marginTop: 12 }}>Sent {new Date(activeLead.sent_at).toLocaleString()}</p>}
+              {activeLead.error && <div className="notice bad" style={{ marginTop: 12 }}>{activeLead.error}</div>}
+
+              <div className="drawer-section-title" style={{ border: 'none', paddingTop: 0 }}>Generated message</div>
+              {isEditing ? (
+                <textarea rows={12} value={editing[effectiveId!]} onChange={(e) => setEditing((p) => ({ ...p, [effectiveId!]: e.target.value }))} />
+              ) : activeLead.messages?.body ? (
+                <div className="card" style={{ boxShadow: 'none', background: 'var(--surface-2)', border: '1px solid var(--border)', marginBottom: 0 }}>
+                  <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 14, lineHeight: 1.65 }}>{activeLead.messages.body}</p>
                 </div>
-                <div style={{ height: 8, background: 'var(--surface-2)', borderRadius: 999, marginTop: 6, overflow: 'hidden' }}>
-                  <div style={{ width: `${Math.min(100, (usage.sentThisWeek / limits.weekly) * 100)}%`, height: '100%', background: 'linear-gradient(90deg,var(--accent),var(--accent-2))' }} />
-                </div>
+              ) : (
+                <p className="muted" style={{ fontSize: 13 }}>No message generated yet. Use “Generate messages” above.</p>
+              )}
+
+              {/* Review actions */}
+              <div className="row" style={{ gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+                {isEditing ? (
+                  <>
+                    <button className="btn" disabled={!editing[effectiveId!].trim()} onClick={() => review(effectiveId!, 'edit', editing[effectiveId!].trim())}>Save</button>
+                    <button className="btn ghost" onClick={() => setEditing((p) => { const n = { ...p }; delete n[effectiveId!]; return n; })}>Cancel</button>
+                  </>
+                ) : (activeLead.status === 'generated' || activeLead.status === 'approved') ? (
+                  <>
+                    {activeLead.status === 'generated' && <button className="btn" onClick={() => review(activeLead.id, 'approve')}>Approve</button>}
+                    {activeLead.messages?.body && <button className="btn secondary" onClick={() => setEditing((p) => ({ ...p, [activeLead.id]: activeLead.messages!.body }))}>Edit</button>}
+                    <button className="btn ghost" onClick={() => review(activeLead.id, 'skip')}>Skip</button>
+                  </>
+                ) : null}
               </div>
-              <p className="muted" style={{ fontSize: 12, marginTop: 14 }}>
-                Active campaigns send automatically each day up to the remaining allowance ({usage.dailyRemaining} left today).
-              </p>
-            </>
+            </div>
+          ) : (
+            <div className="chat-empty">Select a contact to view its message.</div>
           )}
         </div>
       </div>

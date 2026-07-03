@@ -28,6 +28,15 @@ export const IconSend = (p: SVGProps<SVGSVGElement>) => (
 export const IconMail = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><rect x="2" y="4" width="20" height="16" rx="2.5" /><path d="m22 7-10 6L2 7" /></svg>
 );
+export const IconSearch = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+);
+export const IconEye = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
+);
+export const IconEyeOff = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M10.7 5.1A9.9 9.9 0 0 1 12 5c6.5 0 10 7 10 7a13.2 13.2 0 0 1-2.2 2.9M6.1 6.1A13.3 13.3 0 0 0 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.9-1.9" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /><path d="m2 2 20 20" /></svg>
+);
 export const IconSync = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3M3 12a9 9 0 0 0 9 9 9 9 0 0 0 6.7-3" /><path d="M21 3v5h-5M3 21v-5h5" /></svg>
 );
