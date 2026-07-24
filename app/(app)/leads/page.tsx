@@ -15,19 +15,10 @@ interface Lead {
   location: string | null;
   industry: string | null;
   email: string | null;
+  known: boolean;
   enriched_at: string | null;
-  messageCount: number;
-  lastMessageStatus: string | null;
-}
-interface CampaignOpt {
-  id: string;
-  name: string;
-  status: string;
-}
-interface Offer {
-  id: string;
-  name: string;
-  description: string | null;
+  messageStatus: string | null;
+  messageBody: string | null;
 }
 
 function leadName(l: { first_name: string | null; last_name: string | null }) {
@@ -56,16 +47,13 @@ export default function LeadsPage() {
   const [fTitle, setFTitle] = useState('');
   const [fName, setFName] = useState('');
 
-  // Lead multi-select → campaign
+  // Selection + send flow
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
-  const [campModal, setCampModal] = useState(false);
-  const [campaigns, setCampaigns] = useState<CampaignOpt[]>([]);
-  const [offers, setOffers] = useState<Offer[]>([]);
-  const [campMode, setCampMode] = useState<'existing' | 'new'>('existing');
-  const [chosenCamp, setChosenCamp] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newCta, setNewCta] = useState('');
-  const [chosenOffer, setChosenOffer] = useState('');
+  const [busyGen, setBusyGen] = useState(false);
+  const [preview, setPreview] = useState<Lead[] | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [sent, setSent] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState<Set<string>>(new Set());
 
   // Profile drawer
   const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null } | null>(null);
@@ -88,44 +76,55 @@ export default function LeadsPage() {
   function toggleLead(id: string) {
     setSelLeads((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
-
-  async function openCampaignModal() {
-    const [cRes, oRes] = await Promise.all([fetch('/api/campaigns'), fetch('/api/offers')]);
-    const cData = await cRes.json();
-    const oData = await oRes.json();
-    const camps = cData.campaigns ?? [];
-    const offs: Offer[] = oData.offers ?? [];
-    setCampaigns(camps);
-    setOffers(offs);
-    setCampMode(camps.length ? 'existing' : 'new');
-    setChosenCamp(camps[0]?.id ?? '');
-    setChosenOffer(offs[0]?.id ?? '');
-    setNewName(''); setNewCta('');
-    setCampModal(true);
+  const allSelected = leads.length > 0 && leads.every((l) => selLeads.has(l.id));
+  function toggleSelectAll() {
+    setSelLeads(allSelected ? new Set() : new Set(leads.map((l) => l.id)));
   }
 
-  async function addToCampaign() {
-    const leadIds = Array.from(selLeads);
-    if (!leadIds.length) return;
-    let res: Response;
-    if (campMode === 'new') {
-      res = await fetch('/api/campaigns', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), cta: newCta.trim(), offerId: chosenOffer || undefined, leadIds }),
-      });
-    } else {
-      if (!chosenCamp) return setMsg('Pick a campaign.');
-      res = await fetch(`/api/campaigns/${chosenCamp}/leads`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ leadIds }),
-      });
-    }
+  async function generate(idsArg?: string[]) {
+    const ids = idsArg ?? Array.from(selLeads);
+    if (!ids.length) return;
+    setBusyGen(true);
+    setMsg(null);
+    const res = await fetch('/api/leads/generate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ leadIds: ids }),
+    });
     const data = await res.json();
-    if (!res.ok) setMsg('Failed: ' + (data.error ?? res.status));
-    else {
-      setMsg(campMode === 'new' ? `Campaign created with ${leadIds.length} leads.` : `Added ${data.added} lead(s) to campaign.`);
-      setCampModal(false); setSelLeads(new Set());
+    setBusyGen(false);
+    if (!res.ok) { setMsg('Generate failed: ' + (data.error ?? res.status)); return; }
+    const byId: Record<string, string> = {};
+    (data.drafts as Array<{ leadId: string; body: string }>).forEach((d) => { byId[d.leadId] = d.body; });
+    setDrafts(byId);
+    setSent(new Set());
+    setPreview(ids.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l));
+  }
+
+  async function sendOne(id: string): Promise<boolean> {
+    const body = (drafts[id] ?? '').trim();
+    if (!body) return false;
+    setSending((s) => new Set(s).add(id));
+    const res = await fetch(`/api/leads/${id}/send`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    const data = await res.json();
+    setSending((s) => { const n = new Set(s); n.delete(id); return n; });
+    if (!res.ok) { setMsg((data.error ?? `Send failed (${res.status})`)); return false; }
+    setSent((s) => new Set(s).add(id));
+    return true;
+  }
+  async function sendAll() {
+    for (const l of preview ?? []) {
+      if (sent.has(l.id)) continue;
+      const ok = await sendOne(l.id);
+      if (!ok) break; // stop on failure (e.g. daily limit reached)
     }
+  }
+  function closePreview() {
+    setPreview(null);
+    setSelLeads(new Set());
+    loadLeads();
   }
 
   async function openProfile(lead: Lead) {
@@ -133,26 +132,34 @@ export default function LeadsPage() {
     const data = await res.json();
     setProfileModal({ lead, enrichment: data.enrichment });
   }
-  function addOneToCampaign(leadId: string) {
-    setSelLeads(new Set([leadId]));
-    setProfileModal(null);
-    openCampaignModal();
-  }
   async function removeLead(id: string) {
     if (!(await confirm({ title: 'Delete lead', message: 'Delete this lead?', confirmLabel: 'Delete', danger: true }))) return;
     await fetch(`/api/leads/${id}`, { method: 'DELETE' });
     loadLeads();
   }
+  async function setKnown(id: string, known: boolean) {
+    setLeads((p) => p.map((l) => (l.id === id ? { ...l, known } : l))); // optimistic
+    setProfileModal((m) => (m && m.lead.id === id ? { ...m, lead: { ...m.lead, known } } : m));
+    await fetch(`/api/leads/${id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ known }),
+    });
+  }
+
+  const statusBadge = (s: string | null) =>
+    s === 'sent' ? <span className="badge good" style={{ fontSize: 10 }}>sent</span>
+      : s === 'draft' ? <span className="badge warn" style={{ fontSize: 10 }}>draft</span>
+      : null;
 
   return (
     <div>
       <div className="page-header">
         <div>
           <h1>Leads</h1>
-          <div className="sub">Your saved, enriched connections — filter and add them to campaigns</div>
+          <div className="sub">Generate a personalized message and send it — one lead or many</div>
         </div>
         <div className="spacer" />
-        <Link className="btn" href="/connections">Find more leads →</Link>
+        <Link className="btn secondary" href="/connections">Find more leads</Link>
       </div>
 
       {msg && <div className="notice">{msg}</div>}
@@ -177,13 +184,20 @@ export default function LeadsPage() {
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2 style={{ margin: 0 }}>{leads.length} lead{leads.length === 1 ? '' : 's'}</h2>
           {selLeads.size > 0 && (
-            <button className="btn" onClick={openCampaignModal}>Add {selLeads.size} to campaign</button>
+            <button className="btn" onClick={() => generate()} disabled={busyGen}>
+              {busyGen ? 'Generating…' : `Generate ${selLeads.size} message${selLeads.size === 1 ? '' : 's'}`}
+            </button>
           )}
         </div>
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th style={{ width: 32 }}></th><th>Lead</th><th>Company</th><th>Email</th><th>Enrichment</th></tr>
+              <tr>
+                <th style={{ width: 32 }}>
+                  <input type="checkbox" style={{ width: 'auto' }} checked={allSelected} onChange={toggleSelectAll} aria-label="Select all" />
+                </th>
+                <th>Lead</th><th>Company</th><th>Email</th><th>Known</th>
+              </tr>
             </thead>
             <tbody>
               {leads.map((l) => {
@@ -197,7 +211,7 @@ export default function LeadsPage() {
                       <div className="row" style={{ gap: 10, minWidth: 0 }}>
                         <span className="avatar-c" style={{ width: 34, height: 34, fontSize: 12, background: avatarColor(name) }}>{initials(name)}</span>
                         <span style={{ minWidth: 0 }}>
-                          <span style={{ display: 'block', fontWeight: 600 }}>{name}</span>
+                          <span className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{name}</span>{statusBadge(l.messageStatus)}</span>
                           <span className="muted" style={{ display: 'block', fontSize: 12.5 }}>{l.current_title ?? '—'}</span>
                         </span>
                       </div>
@@ -214,10 +228,11 @@ export default function LeadsPage() {
                         </span>
                       ) : '—'}
                     </td>
-                    <td>
-                      {l.enriched_at
-                        ? <span className="badge good">Done</span>
-                        : <span className="badge plain">None</span>}
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <label className="switch" title={l.known ? 'You know this lead' : "You don't know this lead"}>
+                        <input type="checkbox" checked={l.known} onChange={(e) => setKnown(l.id, e.target.checked)} />
+                        <span className="track" /><span className="thumb" />
+                      </label>
                     </td>
                   </tr>
                 );
@@ -230,48 +245,57 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* Add-to-campaign modal */}
-      {campModal && (
-        <div className="modal-backdrop" onClick={() => setCampModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+      {/* Generate → preview → send panel */}
+      {preview && (
+        <div className="modal-backdrop" onClick={closePreview}>
+          <div className="modal" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
             <div className="row" style={{ justifyContent: 'space-between' }}>
-              <h2 style={{ margin: 0 }}>Add {selLeads.size} lead(s) to a campaign</h2>
-              <button className="btn ghost sm" onClick={() => setCampModal(false)}>Close</button>
+              <h2 style={{ margin: 0 }}>Review &amp; send ({preview.length})</h2>
+              <button className="btn ghost sm" onClick={closePreview}>Close</button>
             </div>
-            <div className="seg" style={{ margin: '14px 0' }}>
-              <button className={campMode === 'existing' ? 'on' : ''} onClick={() => setCampMode('existing')}>Existing</button>
-              <button className={campMode === 'new' ? 'on' : ''} onClick={() => setCampMode('new')}>New campaign</button>
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>Edit each message if you like, then send. Sends respect your daily limit.</p>
+
+            <div style={{ maxHeight: '60vh', overflowY: 'auto', marginTop: 8 }}>
+              {preview.map((l) => {
+                const name = leadName(l);
+                const isSent = sent.has(l.id);
+                const isSending = sending.has(l.id);
+                const body = drafts[l.id] ?? '';
+                return (
+                  <div key={l.id} className="card" style={{ boxShadow: 'none', marginTop: 10, marginBottom: 0, background: 'var(--surface-2)' }}>
+                    <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
+                      <span className="row" style={{ gap: 8, minWidth: 0 }}>
+                        <span className="avatar-c" style={{ width: 28, height: 28, fontSize: 11, background: avatarColor(name) }}>{initials(name)}</span>
+                        <span style={{ fontWeight: 600 }}>{name}</span>
+                        {isSent && <span className="badge good">sent</span>}
+                      </span>
+                      {!isSent && (
+                        <button className="btn sm" onClick={() => sendOne(l.id)} disabled={isSending || !body.trim()}>
+                          {isSending ? 'Sending…' : 'Send'}
+                        </button>
+                      )}
+                    </div>
+                    {body ? (
+                      <textarea
+                        rows={6}
+                        value={body}
+                        disabled={isSent}
+                        onChange={(e) => setDrafts((d) => ({ ...d, [l.id]: e.target.value }))}
+                        style={{ marginTop: 8 }}
+                      />
+                    ) : (
+                      <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Generation failed for this lead. Close and try again.</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {campMode === 'existing' ? (
-              <>
-                <label>Campaign</label>
-                <select value={chosenCamp} onChange={(e) => setChosenCamp(e.target.value)}>
-                  {campaigns.length === 0 && <option value="">No campaigns yet</option>}
-                  {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.status})</option>)}
-                </select>
-              </>
-            ) : (
-              <>
-                <label>Name</label>
-                <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Q3 founders outreach" />
-                <label>Call to action</label>
-                <input value={newCta} onChange={(e) => setNewCta(e.target.value)} placeholder="Book a 15-min intro call" />
-                <label>Offer</label>
-                {offers.length === 0 ? (
-                  <p className="muted" style={{ fontSize: 13 }}>
-                    No offers yet — add them in <Link href="/settings">Settings</Link> to ground your messages.
-                  </p>
-                ) : (
-                  <select value={chosenOffer} onChange={(e) => setChosenOffer(e.target.value)}>
-                    {offers.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </select>
-                )}
-              </>
-            )}
-            <button className="btn" style={{ marginTop: 16 }} onClick={addToCampaign}
-              disabled={campMode === 'new' ? !newName.trim() : !chosenCamp}>
-              {campMode === 'new' ? 'Create & add' : 'Add to campaign'}
-            </button>
+
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button className="btn" onClick={sendAll} disabled={preview.every((l) => sent.has(l.id)) || sending.size > 0}>
+                Send all
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -282,8 +306,9 @@ export default function LeadsPage() {
           lead={profileModal.lead}
           enrichment={profileModal.enrichment}
           onClose={() => setProfileModal(null)}
-          onAddToCampaign={() => addOneToCampaign(profileModal.lead.id)}
+          onGenerate={() => { const id = profileModal.lead.id; setProfileModal(null); setSelLeads(new Set([id])); generate([id]); }}
           onDelete={async () => { await removeLead(profileModal.lead.id); setProfileModal(null); }}
+          onSetKnown={(v) => setKnown(profileModal.lead.id, v)}
         />
       )}
     </div>
@@ -304,14 +329,16 @@ function LeadDrawer({
   lead,
   enrichment,
   onClose,
-  onAddToCampaign,
+  onGenerate,
   onDelete,
+  onSetKnown,
 }: {
   lead: Lead;
   enrichment: Record<string, unknown> | null;
   onClose: () => void;
-  onAddToCampaign: () => void;
+  onGenerate: () => void;
   onDelete: () => void;
+  onSetKnown: (v: boolean) => void;
 }) {
   const name = leadName(lead);
   const exp = (enrichment?.experiences as Array<Record<string, string>>) ?? [];
@@ -340,6 +367,18 @@ function LeadDrawer({
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             {lead.email && <a className="chip" href={`mailto:${lead.email}`}>✉ {lead.email}</a>}
             <a className="chip" href={lead.profile_url} target="_blank" rel="noreferrer">in · LinkedIn ↗</a>
+          </div>
+
+          {/* Relationship toggle — drives AI message tone */}
+          <div className="row" style={{ justifyContent: 'space-between', gap: 12, marginTop: 16, padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 'var(--r-ctl)' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>I already know this lead</div>
+              <div className="muted" style={{ fontSize: 12 }}>{lead.known ? 'Messages use a warmer, familiar tone.' : 'Messages use a more formal, professional tone.'}</div>
+            </div>
+            <label className="switch" style={{ flexShrink: 0 }}>
+              <input type="checkbox" checked={lead.known} onChange={(e) => onSetKnown(e.target.checked)} />
+              <span className="track" /><span className="thumb" />
+            </label>
           </div>
 
           {/* Quick facts */}
@@ -414,13 +453,11 @@ function LeadDrawer({
               ))}
             </>
           )}
-
-          {!enrichment && <p className="muted" style={{ fontSize: 13, marginTop: 18 }}>Not enriched yet — no deep profile data available.</p>}
         </div>
 
         <div className="drawer-foot row" style={{ gap: 8 }}>
           <button className="btn ghost" onClick={onDelete}>Delete</button>
-          <button className="btn" style={{ flex: 1 }} onClick={onAddToCampaign}>Add to Campaign →</button>
+          <button className="btn" style={{ flex: 1 }} onClick={onGenerate}>Generate message →</button>
         </div>
       </aside>
     </>

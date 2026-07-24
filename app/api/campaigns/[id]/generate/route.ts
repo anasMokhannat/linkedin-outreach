@@ -2,6 +2,7 @@ import { requireAccountId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { generateMessage } from '@/lib/openrouter';
+import { selectStrategy, FLUGIA_COMPANY } from '@/lib/playbook';
 import { log } from '@/lib/log';
 
 export const runtime = 'nodejs';
@@ -16,10 +17,12 @@ interface EnrichedPost {
  * Generates ONE personalized message per pending lead, grounded on the lead's
  * enrichment + the campaign's CTA (goal) and offer (value-prop).
  */
-export async function POST(_req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
+    // Optional: regenerate a single lead's message (any status except already sent).
+    const body = (await req.json().catch(() => ({}))) as { campaignLeadId?: string };
 
     const { data: campaign } = await svc
       .from('campaigns')
@@ -29,35 +32,27 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       .maybeSingle();
     if (!campaign) throw new HttpError(404, 'Campaign not found.');
 
-    // Company context (per app user) grounds every message in this campaign.
-    const { data: account } = await svc
-      .from('linkedin_accounts')
-      .select('user_id')
-      .eq('id', accountId)
-      .maybeSingle();
-    const { data: user } = account?.user_id
-      ? await svc
-          .from('users')
-          .select('company_name, company_description, company_services, company_usps, company_pain_points')
-          .eq('id', account.user_id)
-          .maybeSingle()
-      : { data: null };
-    const senderCompany = user
-      ? {
-          name: user.company_name,
-          description: user.company_description,
-          services: user.company_services,
-          usps: user.company_usps,
-          painPoints: user.company_pain_points,
-        }
-      : null;
+    // Generation is grounded on the FLUGIA positioning playbook (in code).
+    const senderCompany = FLUGIA_COMPANY;
 
-    // Leads still needing a message.
-    const { data: pending } = await svc
-      .from('campaign_leads')
-      .select('id, lead_id')
-      .eq('campaign_id', params.id)
-      .in('status', ['pending', 'failed']);
+    // Target set: one specific lead (regenerate) or all that still need a message.
+    let pending: Array<{ id: string; lead_id: string }> | null;
+    if (body.campaignLeadId) {
+      const { data } = await svc
+        .from('campaign_leads')
+        .select('id, lead_id, status')
+        .eq('campaign_id', params.id)
+        .eq('id', body.campaignLeadId)
+        .maybeSingle();
+      pending = data && data.status !== 'sent' ? [{ id: data.id, lead_id: data.lead_id }] : [];
+    } else {
+      const { data } = await svc
+        .from('campaign_leads')
+        .select('id, lead_id')
+        .eq('campaign_id', params.id)
+        .in('status', ['pending', 'failed']);
+      pending = data ?? [];
+    }
     if (!pending || pending.length === 0) return json({ ok: true, generated: 0 });
 
     let generated = 0;
@@ -85,6 +80,13 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
           senderValueProp: campaign.offer || 'I help teams like yours.',
           senderGoal: campaign.cta || 'Start a genuine conversation.',
           senderCompany,
+          knownContact: !!lead.known,
+          strategy: selectStrategy({
+            title: lead.current_title,
+            industry: lead.industry,
+            company: lead.current_company,
+            employeeCount: lead.company_size,
+          }),
         });
 
         const { data: msg, error } = await svc

@@ -7,11 +7,26 @@ import { IconBell } from './icons';
 interface Notif {
   id: string;
   leadId: string | null;
+  kind: string;
   leadName: string;
   body: string | null;
   read: boolean;
   createdAt: string;
 }
+
+function notifTitle(n: Notif): string {
+  switch (n.kind) {
+    case 'generated': return `Message generated for ${n.leadName}`;
+    case 'sent': return `Message sent to ${n.leadName}`;
+    case 'reply': return `${n.leadName} replied`;
+    default: return n.leadName;
+  }
+}
+const KIND_DOT: Record<string, string> = {
+  reply: 'var(--accent)',
+  sent: 'var(--good)',
+  generated: 'var(--warn)',
+};
 
 export default function Notifications() {
   const router = useRouter();
@@ -81,20 +96,23 @@ export default function Notifications() {
           background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-card)',
           boxShadow: 'var(--shadow)', zIndex: 40,
         }}>
-          <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>Replies</div>
-          {items.length === 0 && <p className="muted" style={{ padding: 14, fontSize: 13 }}>No replies yet.</p>}
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>Activity</div>
+          {items.length === 0 && <p className="muted" style={{ padding: 14, fontSize: 13 }}>No activity yet.</p>}
           {items.map((n) => (
             <button
               key={n.id}
               onClick={() => { if (n.leadId) { setOpen(false); router.push(`/inbox?lead=${n.leadId}`); } }}
               style={{
-                display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: n.leadId ? 'pointer' : 'default',
                 padding: '11px 14px', borderBottom: '1px solid var(--border)',
                 background: n.read ? 'transparent' : 'var(--accent-soft)',
               }}
             >
-              <div style={{ fontWeight: 600, fontSize: 13.5 }}>{n.leadName}</div>
-              <div className="muted" style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.body || 'replied'}</div>
+              <div className="row" style={{ gap: 7, alignItems: 'baseline' }}>
+                <span style={{ width: 7, height: 7, borderRadius: 999, background: KIND_DOT[n.kind] ?? 'var(--muted)', flexShrink: 0 }} />
+                <span style={{ fontWeight: 600, fontSize: 13.5 }}>{notifTitle(n)}</span>
+              </div>
+              {n.body && <div className="muted" style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{n.body}</div>}
               <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>{new Date(n.createdAt).toLocaleString()}</div>
             </button>
           ))}

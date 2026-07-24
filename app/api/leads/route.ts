@@ -30,30 +30,32 @@ export async function GET(req: NextRequest) {
     if (industry) query = query.ilike('industry', `%${industry}%`);
     if (company) query = query.ilike('current_company', `%${company}%`);
     if (title) query = query.ilike('current_title', `%${title}%`);
-    if (name) query = query.or(`first_name.ilike.%${name}%,last_name.ilike.%${name}%`);
+    if (name) {
+      // Strip PostgREST filter metacharacters to avoid filter injection.
+      const safe = name.replace(/[(),*]/g, ' ').trim();
+      if (safe) query = query.or(`first_name.ilike.%${safe}%,last_name.ilike.%${safe}%`);
+    }
     if (url.searchParams.get('enriched') === 'true') query = query.not('enriched_at', 'is', null);
 
     const { data: leads, error } = await query;
     if (error) throw new Error(error.message);
 
-    // Message counts per lead (for the "View messages" affordance).
+    // Latest message per lead (for the preview / status in the send flow).
     const { data: msgs } = await svc
       .from('messages')
-      .select('lead_id, status')
-      .eq('account_id', accountId);
-    const counts = new Map<string, { total: number; last: string | null }>();
+      .select('lead_id, status, body, created_at')
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: false });
+    const latest = new Map<string, { status: string; body: string }>();
     (msgs ?? []).forEach((m) => {
-      const c = counts.get(m.lead_id) ?? { total: 0, last: null };
-      c.total += 1;
-      c.last = m.status;
-      counts.set(m.lead_id, c);
+      if (!latest.has(m.lead_id)) latest.set(m.lead_id, { status: m.status, body: m.body });
     });
 
     return json({
       leads: (leads ?? []).map((l) => ({
         ...l,
-        messageCount: counts.get(l.id)?.total ?? 0,
-        lastMessageStatus: counts.get(l.id)?.last ?? null,
+        messageStatus: latest.get(l.id)?.status ?? null,
+        messageBody: latest.get(l.id)?.body ?? null,
       })),
     });
   } catch (err) {

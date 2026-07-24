@@ -14,10 +14,10 @@ export async function GET() {
 
     const { data, error } = await svc
       .from('notifications')
-      .select('id, lead_id, body, read, created_at, leads(first_name, last_name)')
+      .select('id, lead_id, kind, body, read, created_at, leads(first_name, last_name)')
       .eq('account_id', accountId)
       .order('created_at', { ascending: false })
-      .limit(30);
+      .limit(40);
     if (error) throw new Error(error.message);
 
     const { count: unread } = await svc
@@ -29,6 +29,7 @@ export async function GET() {
     const items = (data ?? []).map((n) => ({
       id: n.id,
       leadId: n.lead_id,
+      kind: n.kind ?? 'reply',
       body: n.body,
       read: n.read,
       createdAt: n.created_at,
