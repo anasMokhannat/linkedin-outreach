@@ -2,14 +2,16 @@ import { type NextRequest } from 'next/server';
 import { requireAccountId } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
+import { matchesICP } from '@/lib/playbook';
 import type { StagedConnection } from '@/lib/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/connections?q=&company=&role= — staged connections (from the latest
- * sync) with Tier-1 filtering. Account-scoped; marks which are already leads.
+ * GET /api/connections — staged connections (from the latest sync) filtered
+ * server-side to FLUGIA's ICP (in-code, not user-facing). Account-scoped; marks
+ * which are already leads.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -42,20 +44,10 @@ export async function GET(req: NextRequest) {
       return json({ status: account?.last_sync_status ?? 'none', lastSyncAt: account?.last_sync_at ?? null, connections: [] });
     }
 
-    let connections = account.staged_connections as StagedConnection[];
-    const url = new URL(req.url);
-    const q = url.searchParams.get('q')?.toLowerCase().trim();
-    const company = url.searchParams.get('company')?.toLowerCase().trim();
-    const role = url.searchParams.get('role')?.toLowerCase().trim();
-    if (q) connections = connections.filter((c) => c.fullName.toLowerCase().includes(q));
-    if (company)
-      connections = connections.filter(
-        (c) => (c.company ?? '').toLowerCase().includes(company) || (c.headline ?? '').toLowerCase().includes(company)
-      );
-    if (role)
-      connections = connections.filter(
-        (c) => (c.title ?? '').toLowerCase().includes(role) || (c.headline ?? '').toLowerCase().includes(role)
-      );
+    const all = account.staged_connections as StagedConnection[];
+    // In-code ICP filter (not exposed to the user): only surface connections
+    // whose headline/title matches FLUGIA's target decision-maker roles.
+    const connections = all.filter((c) => matchesICP(c));
 
     const { data: existing } = await svc.from('leads').select('profile_url').eq('account_id', accountId);
     const persisted = new Set((existing ?? []).map((l) => l.profile_url));

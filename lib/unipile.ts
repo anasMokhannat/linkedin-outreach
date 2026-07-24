@@ -299,6 +299,8 @@ export interface UnipileProfile {
   summary?: string | null;
   companyAbout?: string | null;
   email?: string | null;
+  /** Provider id / public identifier of the current company, for company lookup. */
+  currentCompanyId?: string | null;
   experiences: UnipileExperience[];
   education: UnipileEducation[];
   skills: string[];
@@ -354,6 +356,23 @@ export async function unipileGetProfile(
   }));
   const current = experiences.find((e) => e.current) ?? experiences[0];
 
+  // The current company's provider id / public identifier (for company lookup).
+  const rawList = Array.isArray(rawExp) ? rawExp : [];
+  const rawCurrent = rawList.find((e) => e.end == null || e.end === '') ?? rawList[0];
+  const companyOf = (e: any) =>
+    (typeof e?.company_id === 'string' && e.company_id) ||
+    (typeof e?.companyId === 'string' && e.companyId) ||
+    (typeof e?.company_urn === 'string' && e.company_urn) ||
+    (typeof e?.company?.id === 'string' && e.company.id) ||
+    (typeof e?.company?.public_identifier === 'string' && e.company.public_identifier) ||
+    null;
+  const currentCompanyId =
+    companyOf(rawCurrent) ||
+    (typeof p.current_company?.id === 'string' && p.current_company.id) ||
+    (typeof p.current_company?.public_identifier === 'string' && p.current_company.public_identifier) ||
+    (typeof p.company?.id === 'string' && p.company.id) ||
+    null;
+
   const rawEdu = (p.education ?? p.educations ?? p.schools ?? []) as any[];
   const education: UnipileEducation[] = (Array.isArray(rawEdu) ? rawEdu : []).map((e) => ({
     school: e.school ?? e.schoolName ?? e.name,
@@ -379,12 +398,61 @@ export async function unipileGetProfile(
     industry: pick('industry') ?? null,
     companyAbout: null,
     email: extractEmail(p),
+    currentCompanyId: currentCompanyId || null,
     experiences,
     education,
     skills,
     connectionsCount: typeof p.connections_count === 'number' ? p.connections_count : null,
     raw: p,
   };
+}
+
+export interface UnipileCompany {
+  name?: string | null;
+  industry?: string | null;
+  employeeCount?: number | null;
+  description?: string | null;
+}
+
+/**
+ * Best-effort LinkedIn company retrieval (industry + employee count) used to
+ * drive the positioning playbook (sector + size tier). Returns null on any
+ * failure so enrichment never breaks on it. NOTE: the exact endpoint/fields
+ * should be verified against your Unipile plan with a live account.
+ */
+export async function unipileGetCompany(
+  accountId: string,
+  identifier: string
+): Promise<UnipileCompany | null> {
+  try {
+    const url = new URL(`${base()}/api/v1/linkedin/company/${encodeURIComponent(identifier)}`);
+    url.searchParams.set('account_id', accountId);
+    const res = await uFetch(url.toString(), { headers: jsonHeaders() });
+    if (!res.ok) return null;
+    const c = (await res.json()) as Record<string, any>;
+
+    const numish = (...keys: string[]): number | null => {
+      for (const k of keys) {
+        const v = c[k];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        if (typeof v === 'string' && /^\d+$/.test(v.trim())) return parseInt(v, 10);
+      }
+      return null;
+    };
+    const strish = (...keys: string[]): string | null => {
+      for (const k of keys) if (typeof c[k] === 'string' && c[k].trim()) return c[k];
+      return null;
+    };
+
+    return {
+      name: strish('name', 'company_name'),
+      industry: strish('industry', 'industry_name'),
+      employeeCount: numish('employee_count', 'staff_count', 'employees_count', 'staff_headcount'),
+      description: strish('description', 'about'),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export interface UnipilePost {

@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   unipileGetProfile,
   unipileGetPosts,
+  unipileGetCompany,
   deriveIdentifier,
   isUnipileAuthError,
 } from './unipile';
@@ -68,6 +69,17 @@ export async function enrichLead(
   if (profile.industry) patch.industry = profile.industry;
   if (profile.headline) patch.headline = profile.headline;
   if (profile.email) patch.email = profile.email;
+
+  // Best-effort company retrieval (sector + size tier for the playbook).
+  if (profile.currentCompanyId) {
+    const company = await unipileGetCompany(unipileAccountId, profile.currentCompanyId);
+    if (company) {
+      if (typeof company.employeeCount === 'number') patch.company_size = company.employeeCount;
+      // Prefer the company's classified industry over the person-level one.
+      if (company.industry) patch.industry = company.industry;
+    }
+  }
+
   await svc.from('leads').update(patch).eq('id', lead.id).eq('account_id', accountId);
 
   return true;

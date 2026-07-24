@@ -6,62 +6,55 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/inbox — the leads you're conversing with (everyone in a campaign),
- * shaped for the chat sidebar. Account-scoped.
+ * GET /api/inbox — the leads you're conversing with: anyone you've messaged
+ * directly (has a message) or have a chat thread with. Ordered by most recent
+ * message. Account-scoped.
  */
 export async function GET() {
   try {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
 
-    // Distinct leads that are part of any campaign (with their campaign ids).
-    const { data: cl } = await svc
-      .from('campaign_leads')
-      .select('lead_id, campaign_id, created_at')
+    // Most-recent-first message activity → lead ordering.
+    const { data: msgs } = await svc
+      .from('messages')
+      .select('lead_id, created_at')
       .eq('account_id', accountId)
       .order('created_at', { ascending: false });
 
-    const leadIds = Array.from(new Set((cl ?? []).map((r) => r.lead_id)));
-    if (leadIds.length === 0) return json({ leads: [] });
-
-    // Campaign names, then a lead -> campaign name(s) map.
-    const { data: campaigns } = await svc
-      .from('campaigns')
-      .select('id, name')
-      .eq('account_id', accountId);
-    const campaignName = new Map((campaigns ?? []).map((c) => [c.id, c.name]));
-
-    const leadCampaigns = new Map<string, string[]>();
-    for (const r of cl ?? []) {
-      const nm = campaignName.get(r.campaign_id);
-      if (!nm) continue;
-      const list = leadCampaigns.get(r.lead_id) ?? [];
-      if (!list.includes(nm)) list.push(nm);
-      leadCampaigns.set(r.lead_id, list);
+    const orderedIds: string[] = [];
+    const seen = new Set<string>();
+    for (const m of msgs ?? []) {
+      if (m.lead_id && !seen.has(m.lead_id)) { seen.add(m.lead_id); orderedIds.push(m.lead_id); }
     }
+
+    // Also include leads with an existing chat thread but no recorded message.
+    const { data: chatLeads } = await svc
+      .from('leads')
+      .select('id')
+      .eq('account_id', accountId)
+      .not('provider_chat_id', 'is', null);
+    for (const l of chatLeads ?? []) {
+      if (!seen.has(l.id)) { seen.add(l.id); orderedIds.push(l.id); }
+    }
+
+    if (orderedIds.length === 0) return json({ leads: [] });
 
     const { data: leads } = await svc
       .from('leads')
       .select('id, first_name, last_name, current_title, current_company')
       .eq('account_id', accountId)
-      .in('id', leadIds);
-
+      .in('id', orderedIds);
     const byId = new Map((leads ?? []).map((l) => [l.id, l]));
-    // Preserve campaign_leads recency ordering.
-    const ordered = leadIds
+
+    const ordered = orderedIds
       .map((id) => byId.get(id))
       .filter((l): l is NonNullable<typeof l> => !!l)
-      .map((l) => {
-        const camps = leadCampaigns.get(l.id) ?? [];
-        return {
-          leadId: l.id,
-          name: [l.first_name, l.last_name].filter(Boolean).join(' ') || 'Lead',
-          subtitle:
-            [l.current_title, l.current_company, camps.length ? `◆ ${camps.join(', ')}` : null]
-              .filter(Boolean)
-              .join(' · ') || undefined,
-        };
-      });
+      .map((l) => ({
+        leadId: l.id,
+        name: [l.first_name, l.last_name].filter(Boolean).join(' ') || 'Lead',
+        subtitle: [l.current_title, l.current_company].filter(Boolean).join(' · ') || undefined,
+      }));
 
     return json({ leads: ordered });
   } catch (err) {

@@ -167,6 +167,9 @@ export default function CampaignChat({ leads, initialLeadId }: { leads: ChatLead
                 {sending ? 'Sending…' : 'Send'}
               </button>
             </div>
+            <div className="muted" style={{ fontSize: 11.5, padding: '0 16px 10px', textAlign: 'center' }}>
+              Replies count toward your sending limit — 25/day · 100/week.
+            </div>
           </>
         ) : (
           <div className="chat-empty">Select a lead to view the conversation.</div>

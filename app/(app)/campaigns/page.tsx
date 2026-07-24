@@ -20,11 +20,6 @@ interface LeadOpt {
   current_title: string | null;
   current_company: string | null;
 }
-interface Offer {
-  id: string;
-  name: string;
-}
-
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -33,8 +28,6 @@ export default function CampaignsPage() {
   // Create form
   const [name, setName] = useState('');
   const [cta, setCta] = useState('');
-  const [offers, setOffers] = useState<Offer[]>([]);
-  const [chosenOffer, setChosenOffer] = useState('');
   const [leads, setLeads] = useState<LeadOpt[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [q, setQ] = useState('');
@@ -54,12 +47,9 @@ export default function CampaignsPage() {
     setName('');
     setCta('');
     setPicked(new Set());
-    const [lRes, oRes] = await Promise.all([fetch('/api/leads'), fetch('/api/offers')]);
+    const lRes = await fetch('/api/leads');
     const lData = await lRes.json();
-    const oData = await oRes.json();
     setLeads(lData.leads ?? []);
-    setOffers(oData.offers ?? []);
-    setChosenOffer((oData.offers ?? [])[0]?.id ?? '');
   }
 
   const filtered = useMemo(() => {
@@ -82,7 +72,7 @@ export default function CampaignsPage() {
     const res = await fetch('/api/campaigns', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: name.trim(), cta: cta.trim(), offerId: chosenOffer || undefined, leadIds: Array.from(picked) }),
+      body: JSON.stringify({ name: name.trim(), cta: cta.trim(), leadIds: Array.from(picked) }),
     });
     const data = await res.json();
     setBusy(false);
@@ -144,16 +134,6 @@ export default function CampaignsPage() {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Q3 founders outreach" />
             <label>Call to action (the goal of the message)</label>
             <input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="Book a 15-min intro call" />
-            <label>Offer</label>
-            {offers.length === 0 ? (
-              <p className="muted" style={{ fontSize: 13 }}>
-                No offers yet — add them in <Link href="/settings">Settings</Link> to ground your messages.
-              </p>
-            ) : (
-              <select value={chosenOffer} onChange={(e) => setChosenOffer(e.target.value)}>
-                {offers.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
-            )}
 
             <label style={{ marginTop: 12 }}>Leads ({picked.size} selected)</label>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search leads" style={{ marginBottom: 8 }} />
