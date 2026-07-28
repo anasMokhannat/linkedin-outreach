@@ -21,6 +21,15 @@ interface Lead {
   messageBody: string | null;
 }
 
+interface LeadMessage {
+  id: string;
+  body: string;
+  status: string;
+  model: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
 function leadName(l: { first_name: string | null; last_name: string | null }) {
   return [l.first_name, l.last_name].filter(Boolean).join(' ') || 'Lead';
 }
@@ -56,7 +65,7 @@ export default function LeadsPage() {
   const [sending, setSending] = useState<Set<string>>(new Set());
 
   // Profile drawer
-  const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null } | null>(null);
+  const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null; messages: LeadMessage[] } | null>(null);
 
   const loadLeads = useCallback(async () => {
     const p = new URLSearchParams();
@@ -130,11 +139,20 @@ export default function LeadsPage() {
   async function openProfile(lead: Lead) {
     const res = await fetch(`/api/leads/${lead.id}`);
     const data = await res.json();
-    setProfileModal({ lead, enrichment: data.enrichment });
+    setProfileModal({ lead, enrichment: data.enrichment, messages: data.messages ?? [] });
   }
   async function removeLead(id: string) {
     if (!(await confirm({ title: 'Delete lead', message: 'Delete this lead?', confirmLabel: 'Delete', danger: true }))) return;
-    await fetch(`/api/leads/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/leads/${id}`, { method: 'DELETE' });
+    if (!res.ok) { setMsg('Delete failed.'); return; }
+    // Drop any generated-message UI state for this lead so it can't stay visible.
+    setDrafts((d) => { const n = { ...d }; delete n[id]; return n; });
+    setSent((s) => { const n = new Set(s); n.delete(id); return n; });
+    setPreview((p) => {
+      if (!p) return p;
+      const next = p.filter((l) => l.id !== id);
+      return next.length ? next : null;
+    });
     loadLeads();
   }
   async function setKnown(id: string, known: boolean) {
@@ -196,7 +214,7 @@ export default function LeadsPage() {
                 <th style={{ width: 32 }}>
                   <input type="checkbox" style={{ width: 'auto' }} checked={allSelected} onChange={toggleSelectAll} aria-label="Select all" />
                 </th>
-                <th>Lead</th><th>Company</th><th>Email</th><th>Known</th>
+                <th>Lead</th><th>Company</th><th>Email</th><th>Known</th><th style={{ width: 44 }} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -234,11 +252,14 @@ export default function LeadsPage() {
                         <span className="track" /><span className="thumb" />
                       </label>
                     </td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <button className="btn ghost sm" title="Remove lead" aria-label="Remove lead" onClick={() => removeLead(l.id)}>✕</button>
+                    </td>
                   </tr>
                 );
               })}
               {leads.length === 0 && (
-                <tr><td colSpan={5} className="muted">No leads yet — head to <Link href="/connections">Connections</Link> to add matching connections.</td></tr>
+                <tr><td colSpan={6} className="muted">No leads yet — head to <Link href="/connections">Connections</Link> to add matching connections.</td></tr>
               )}
             </tbody>
           </table>
@@ -305,6 +326,7 @@ export default function LeadsPage() {
         <LeadDrawer
           lead={profileModal.lead}
           enrichment={profileModal.enrichment}
+          messages={profileModal.messages}
           onClose={() => setProfileModal(null)}
           onGenerate={() => { const id = profileModal.lead.id; setProfileModal(null); setSelLeads(new Set([id])); generate([id]); }}
           onDelete={async () => { await removeLead(profileModal.lead.id); setProfileModal(null); }}
@@ -328,6 +350,7 @@ function Field({ k, v }: { k: string; v: string | null | undefined }) {
 function LeadDrawer({
   lead,
   enrichment,
+  messages,
   onClose,
   onGenerate,
   onDelete,
@@ -335,6 +358,7 @@ function LeadDrawer({
 }: {
   lead: Lead;
   enrichment: Record<string, unknown> | null;
+  messages: LeadMessage[];
   onClose: () => void;
   onGenerate: () => void;
   onDelete: () => void;
@@ -380,6 +404,26 @@ function LeadDrawer({
               <span className="track" /><span className="thumb" />
             </label>
           </div>
+
+          {/* Generated messages — AI drafts and sent messages for this lead */}
+          <div className="drawer-section-title">Generated messages</div>
+          {messages.length === 0 ? (
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>None yet — use “Generate message” below to create one.</p>
+          ) : (
+            messages.map((m) => {
+              const sent = m.status === 'sent';
+              const ts = sent ? m.sent_at ?? m.created_at : m.created_at;
+              return (
+                <div key={m.id} style={{ marginBottom: 10, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-ctl)' }}>
+                  <div className="row" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                    <span className={`badge ${sent ? 'good' : 'warn'}`}>{sent ? 'Sent' : 'Not sent yet'}</span>
+                    {ts && <span className="muted" style={{ fontSize: 12 }}>{new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, lineHeight: 1.5 }}>{m.body}</div>
+                </div>
+              );
+            })
+          )}
 
           {/* Quick facts */}
           <div className="drawer-section-title">General</div>

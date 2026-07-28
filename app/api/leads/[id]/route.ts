@@ -23,7 +23,14 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       .select('summary, experiences, education, skills, company, recent_posts')
       .eq('lead_id', params.id)
       .maybeSingle();
-    return json({ lead, enrichment: enrichment ?? null });
+    // Generated messages for this lead (drafts + sent), newest first.
+    const { data: messages } = await svc
+      .from('messages')
+      .select('id, body, status, model, created_at, sent_at')
+      .eq('account_id', accountId)
+      .eq('lead_id', params.id)
+      .order('created_at', { ascending: false });
+    return json({ lead, enrichment: enrichment ?? null, messages: messages ?? [] });
   } catch (err) {
     return errorResponse(err);
   }
@@ -48,11 +55,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-/** DELETE /api/leads/:id — remove a lead (account-scoped; cascades enrichment + messages). */
+/**
+ * DELETE /api/leads/:id — remove a lead (account-scoped).
+ * `messages` and `lead_enrichment` cascade on the FK, but `notifications`
+ * reference the lead with ON DELETE SET NULL, so a generated/sent notification
+ * would otherwise linger in the activity feed after the lead is gone. Delete
+ * those explicitly so nothing about the lead stays visible.
+ */
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   try {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
+    await svc
+      .from('notifications')
+      .delete()
+      .eq('account_id', accountId)
+      .eq('lead_id', params.id);
     const { error } = await svc
       .from('leads')
       .delete()

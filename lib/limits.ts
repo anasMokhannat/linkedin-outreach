@@ -4,8 +4,11 @@ import { createSupabaseServiceClient } from './supabase-server';
 /**
  * App-defined sending limits — conservative LinkedIn/Unipile-safe caps.
  * NOT user-configurable (deliberately hardcoded here).
+ *
+ * These caps apply ONLY to starting NEW conversations (first-touch DMs).
+ * Replies within an existing conversation are NOT counted and NOT limited.
  */
-export const DAILY_MESSAGE_LIMIT = 25;
+export const DAILY_MESSAGE_LIMIT = 15;
 export const WEEKLY_MESSAGE_LIMIT = 100;
 
 /** Per-send pacing jitter used by the campaign sender (ms). */
