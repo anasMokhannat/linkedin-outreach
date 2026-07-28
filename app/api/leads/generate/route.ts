@@ -27,11 +27,12 @@ export async function POST(req: NextRequest) {
     if (leadIds.length === 0) throw new HttpError(400, 'No leads selected.');
 
     const svc = createSupabaseServiceClient();
-    const { data: leads } = await svc
+    const { data: leads, error: leadsError } = await svc
       .from('leads')
       .select('id, first_name, last_name, current_title, current_company, industry, company_size, known')
       .eq('account_id', accountId)
       .in('id', leadIds.slice(0, BATCH_CAP));
+    if (leadsError) throw new Error(leadsError.message);
     if (!leads || leads.length === 0) throw new HttpError(400, 'No valid leads.');
 
     const results: Array<{ leadId: string; body: string }> = [];

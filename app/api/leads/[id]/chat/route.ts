@@ -2,15 +2,16 @@ import { type NextRequest } from 'next/server';
 import { requireAccountId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
-import { getUsage } from '@/lib/limits';
 import { unipileSendNewMessage, isUnipileAuthError } from '@/lib/unipile';
 import { log } from '@/lib/log';
 
 export const runtime = 'nodejs';
 
 /**
- * POST /api/leads/:id/chat  { text } — send a manual chat message to a lead.
- * Counts toward and is blocked by the app-defined daily/weekly limits.
+ * POST /api/leads/:id/chat  { text } — send a manual reply within an existing
+ * conversation. Replies do NOT count toward, and are NOT blocked by, the
+ * daily/weekly sending limits — those apply only to starting new conversations
+ * (direct sends and campaign first-touches).
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -36,10 +37,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!account?.unipile_account_id) throw new HttpError(400, 'No LinkedIn account connected.');
     if (account.status !== 'connected') throw new HttpError(409, 'Session needs reconnecting.');
 
-    const usage = await getUsage(accountId);
-    if (usage.allowedNow <= 0) throw new HttpError(429, 'Sending limit reached — continue later.');
-
-    const today = new Date().toISOString().slice(0, 10);
     if (!lead.provider_member_id) throw new HttpError(422, 'Lead has no messaging id — re-sync connections.');
 
     try {
@@ -56,7 +53,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       throw err instanceof HttpError ? err : new HttpError(502, 'Failed to send.');
     }
 
-    // Record as a sent message + count usage.
+    // Record as a sent message. NOTE: replies are intentionally NOT counted in
+    // daily_usage — the limit tracks new-conversation sends only.
     await svc.from('messages').insert({
       account_id: accountId,
       lead_id: lead.id,
@@ -65,8 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       sent_at: new Date().toISOString(),
       edited_by_user: true,
     });
-    await svc.rpc('app_increment_daily_usage', { p_account_id: accountId, p_day: today });
-    await svc.from('send_log').insert({ account_id: accountId, event: 'dm_sent', detail: { via: 'chat' } });
+    await svc.from('send_log').insert({ account_id: accountId, event: 'reply_sent', detail: { via: 'chat' } });
     log.info('chat', 'sent', { accountId, leadId: lead.id });
 
     return json({ ok: true });

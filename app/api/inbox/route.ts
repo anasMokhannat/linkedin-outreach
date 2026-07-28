@@ -15,11 +15,14 @@ export async function GET() {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
 
-    // Most-recent-first message activity → lead ordering.
+    // Most-recent-first message activity → lead ordering. Only sent messages
+    // count as a conversation — a generated-but-unsent draft must NOT surface a
+    // lead in the inbox.
     const { data: msgs } = await svc
       .from('messages')
       .select('lead_id, created_at')
       .eq('account_id', accountId)
+      .eq('status', 'sent')
       .order('created_at', { ascending: false });
 
     const orderedIds: string[] = [];

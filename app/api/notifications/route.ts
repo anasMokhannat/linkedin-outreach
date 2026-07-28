@@ -12,10 +12,13 @@ export async function GET() {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
 
+    // Exclude notifications whose lead has been deleted (lead_id set to null by
+    // the FK) — they should not linger in the feed.
     const { data, error } = await svc
       .from('notifications')
       .select('id, lead_id, kind, body, read, created_at, leads(first_name, last_name)')
       .eq('account_id', accountId)
+      .not('lead_id', 'is', null)
       .order('created_at', { ascending: false })
       .limit(40);
     if (error) throw new Error(error.message);
@@ -24,6 +27,7 @@ export async function GET() {
       .from('notifications')
       .select('id', { count: 'exact', head: true })
       .eq('account_id', accountId)
+      .not('lead_id', 'is', null)
       .eq('read', false);
 
     const items = (data ?? []).map((n) => ({

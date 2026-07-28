@@ -56,11 +56,13 @@ export default function SettingsPage() {
       <div className="card" style={{ maxWidth: 720 }}>
         <h2 style={{ marginTop: 0 }}>Sending limits</h2>
         <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-          To keep your LinkedIn account safe, sending is capped automatically and can&apos;t be changed.
+          To keep your LinkedIn account safe, starting new conversations is capped
+          automatically and can&apos;t be changed. Replies to people who&apos;ve
+          already written back don&apos;t count and aren&apos;t limited.
         </p>
         <div className="row" style={{ gap: 10 }}>
-          <span className="badge plain">25 messages / day</span>
-          <span className="badge plain">100 messages / week</span>
+          <span className="badge plain">15 new conversations / day</span>
+          <span className="badge plain">100 / week</span>
         </div>
       </div>
 
