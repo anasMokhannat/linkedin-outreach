@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     const svc = createSupabaseServiceClient();
     const { data: leads, error: leadsError } = await svc
       .from('leads')
-      .select('id, first_name, last_name, current_title, current_company, industry, company_size, known')
+      .select('id, first_name, last_name, current_title, current_company, industry, company_size, known, recent_posts')
       .eq('account_id', accountId)
       .in('id', leadIds.slice(0, BATCH_CAP));
     if (leadsError) throw new Error(leadsError.message);
@@ -37,13 +37,8 @@ export async function POST(req: NextRequest) {
 
     const results: Array<{ leadId: string; body: string }> = [];
     for (const lead of leads) {
-      const { data: enr } = await svc
-        .from('lead_enrichment')
-        .select('recent_posts')
-        .eq('lead_id', lead.id)
-        .maybeSingle();
-      const posts = Array.isArray(enr?.recent_posts)
-        ? ((enr!.recent_posts as EnrichedPost[]).map((p) => p.text).filter(Boolean) as string[])
+      const posts = Array.isArray(lead.recent_posts)
+        ? ((lead.recent_posts as EnrichedPost[]).map((p) => p.text).filter(Boolean) as string[])
         : [];
 
       try {
