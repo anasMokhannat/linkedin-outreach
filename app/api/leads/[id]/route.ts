@@ -18,11 +18,16 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       .eq('account_id', accountId)
       .maybeSingle();
     if (!lead) return json({ error: 'Lead not found' }, 404);
-    const { data: enrichment } = await svc
-      .from('lead_enrichment')
-      .select('summary, experiences, education, skills, company, recent_posts')
-      .eq('lead_id', params.id)
-      .maybeSingle();
+    // Enrichment detail now lives on the lead row — assemble the shape the
+    // profile drawer expects from the lead's own columns.
+    const enrichment = {
+      summary: lead.summary ?? null,
+      experiences: lead.experiences ?? null,
+      education: lead.education ?? null,
+      skills: lead.skills ?? null,
+      company: lead.company ?? null,
+      recent_posts: lead.recent_posts ?? null,
+    };
     // Generated messages for this lead (drafts + sent), newest first.
     const { data: messages } = await svc
       .from('messages')
@@ -57,8 +62,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 /**
  * DELETE /api/leads/:id — remove a lead (account-scoped).
- * `messages` and `lead_enrichment` cascade on the FK, but `notifications`
- * reference the lead with ON DELETE SET NULL, so a generated/sent notification
+ * `messages` cascade on the FK (and enrichment now lives on the lead row, so it
+ * goes with it), but `notifications` reference the lead with ON DELETE SET NULL,
+ * so a generated/sent notification
  * would otherwise linger in the activity feed after the lead is gone. Delete
  * those explicitly so nothing about the lead stays visible.
  */

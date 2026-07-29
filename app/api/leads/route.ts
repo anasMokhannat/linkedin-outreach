@@ -16,9 +16,14 @@ export async function GET(req: NextRequest) {
     const svc = createSupabaseServiceClient();
     const url = new URL(req.url);
 
+    // Explicit column list — exclude the heavy enrichment jsonb (summary,
+    // experiences, education, skills, company, recent_posts, raw); those are
+    // fetched per-lead via GET /api/leads/:id for the profile drawer.
     let query = svc
       .from('leads')
-      .select('*')
+      .select(
+        'id, account_id, profile_url, provider_member_id, first_name, last_name, headline, current_company, current_title, location, school, industry, email, known, company_size, enriched_at, provider_chat_id, created_at'
+      )
       .eq('account_id', accountId)
       .order('created_at', { ascending: false })
       .limit(500);

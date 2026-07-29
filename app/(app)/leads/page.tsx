@@ -501,7 +501,15 @@ function LeadDrawer({
 
         <div className="drawer-foot row" style={{ gap: 8 }}>
           <button className="btn ghost" onClick={onDelete}>Delete</button>
-          <button className="btn" style={{ flex: 1 }} onClick={onGenerate}>Generate message →</button>
+          <button
+            className="btn"
+            style={{ flex: 1 }}
+            onClick={onGenerate}
+            disabled={messages.length > 0}
+            title={messages.length > 0 ? 'A message was already generated for this lead — edit it in Messages' : undefined}
+          >
+            {messages.length > 0 ? 'Message already generated' : 'Generate message →'}
+          </button>
         </div>
       </aside>
     </>

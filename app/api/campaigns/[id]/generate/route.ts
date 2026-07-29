@@ -59,13 +59,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     for (const cl of pending) {
       const { data: lead } = await svc.from('leads').select('*').eq('id', cl.lead_id).maybeSingle();
       if (!lead) continue;
-      const { data: enr } = await svc
-        .from('lead_enrichment')
-        .select('recent_posts')
-        .eq('lead_id', cl.lead_id)
-        .maybeSingle();
-      const posts = Array.isArray(enr?.recent_posts)
-        ? ((enr!.recent_posts as EnrichedPost[]).map((p) => p.text).filter(Boolean) as string[])
+      const posts = Array.isArray(lead.recent_posts)
+        ? ((lead.recent_posts as EnrichedPost[]).map((p) => p.text).filter(Boolean) as string[])
         : [];
 
       try {

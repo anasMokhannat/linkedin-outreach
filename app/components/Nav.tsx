@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { IconGrid, IconUsers, IconSettings, IconMail, IconSearch } from './icons';
+import { IconGrid, IconUsers, IconSettings, IconMail, IconSearch, IconSparkle } from './icons';
 
 const LINKS = [
   { href: '/dashboard', label: 'Overview', Icon: IconGrid },
   { href: '/connections', label: 'Connections', Icon: IconSearch },
   { href: '/leads', label: 'Leads', Icon: IconUsers },
+  { href: '/messages', label: 'Messages', Icon: IconSparkle },
   { href: '/inbox', label: 'Inbox', Icon: IconMail },
   { href: '/settings', label: 'Settings', Icon: IconSettings },
 ];

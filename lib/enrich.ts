@@ -18,10 +18,11 @@ interface LeadRow {
 
 /**
  * Full enrichment for one lead via Unipile: profile (role, company, location,
- * school, industry, email if exposed) + recent posts. Persists to
- * lead_enrichment and copies key fields onto the lead. Returns true on success,
- * false when no identifier is available. Throws LeadAuthError when the LinkedIn
- * session needs reconnecting (so callers can flag the account).
+ * school, industry, email if exposed) + recent posts. Persists everything —
+ * both the basic fields and the enrichment detail (summary, experiences,
+ * education, skills, company, recent_posts, raw) — directly onto the lead row.
+ * Returns true on success, false when no identifier is available. Throws
+ * LeadAuthError when the LinkedIn session needs reconnecting.
  */
 export async function enrichLead(
   svc: SupabaseClient,
@@ -44,24 +45,19 @@ export async function enrichLead(
     throw err;
   }
 
-  await svc.from('lead_enrichment').upsert(
-    {
-      lead_id: lead.id,
-      account_id: accountId,
-      summary: profile.summary ?? null,
-      experiences: profile.experiences,
-      education: profile.education,
-      skills: profile.skills,
-      company: profile.currentCompany
-        ? { name: profile.currentCompany, title: profile.currentTitle }
-        : null,
-      recent_posts: posts,
-      raw: profile.raw,
-    },
-    { onConflict: 'lead_id' }
-  );
-
-  const patch: Record<string, unknown> = { enriched_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = {
+    enriched_at: new Date().toISOString(),
+    // Enrichment detail — now stored on the lead row itself (no lead_enrichment).
+    summary: profile.summary ?? null,
+    experiences: profile.experiences,
+    education: profile.education,
+    skills: profile.skills,
+    company: profile.currentCompany
+      ? { name: profile.currentCompany, title: profile.currentTitle }
+      : null,
+    recent_posts: posts,
+    raw: profile.raw,
+  };
   if (profile.currentCompany) patch.current_company = profile.currentCompany;
   if (profile.currentTitle) patch.current_title = profile.currentTitle;
   if (profile.location) patch.location = profile.location;
