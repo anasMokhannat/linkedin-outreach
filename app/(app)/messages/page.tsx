@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useConfirm } from '@/app/components/ConfirmDialog';
-import { IconSparkle } from '@/app/components/icons';
+import { fetchJson } from '@/lib/fetch-json';
 
 interface GenMessage {
   id: string;
@@ -45,12 +45,16 @@ export default function MessagesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetch('/api/messages');
-    const data = await res.json();
-    const list: GenMessage[] = data.messages ?? [];
-    setMessages(list);
-    setEdits(Object.fromEntries(list.map((m) => [m.id, m.body])));
-    setLoading(false);
+    try {
+      const data = await fetchJson<{ messages?: GenMessage[] }>('/api/messages');
+      const list = data.messages ?? [];
+      setMessages(list);
+      setEdits(Object.fromEntries(list.map((m) => [m.id, m.body])));
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Failed to load messages.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => {
     load();
@@ -61,27 +65,33 @@ export default function MessagesPage() {
     if (!body || body === m.body) return;
     setNotice(null);
     setSaving((s) => new Set(s).add(m.id));
-    const res = await fetch(`/api/messages/${m.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ body }),
-    });
-    const data = await res.json();
-    setSaving((s) => { const n = new Set(s); n.delete(m.id); return n; });
-    if (!res.ok) { setNotice(`Save failed: ${data.error ?? res.status}`); return; }
-    setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, body, editedByUser: true } : x)));
-    setNotice(`Saved edit for ${m.name}.`);
+    try {
+      await fetchJson(`/api/messages/${m.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, body, editedByUser: true } : x)));
+      setNotice(`Saved edit for ${m.name}.`);
+    } catch (e) {
+      setNotice(`Save failed: ${e instanceof Error ? e.message : 'error'}`);
+    } finally {
+      setSaving((s) => { const n = new Set(s); n.delete(m.id); return n; });
+    }
   }
 
   async function discard(m: GenMessage) {
     if (!(await confirm({ title: 'Discard message', message: `Discard the generated message for ${m.name}?`, confirmLabel: 'Discard', danger: true }))) return;
     setBusy((s) => new Set(s).add(m.id));
-    const res = await fetch(`/api/messages/${m.id}`, { method: 'DELETE' });
-    setBusy((s) => { const n = new Set(s); n.delete(m.id); return n; });
-    if (res.ok) {
+    try {
+      await fetchJson(`/api/messages/${m.id}`, { method: 'DELETE' });
       setMessages((list) => list.filter((x) => x.id !== m.id));
       setEdits((e) => { const n = { ...e }; delete n[m.id]; return n; });
-    } else setNotice('Discard failed.');
+    } catch (e) {
+      setNotice(`Discard failed: ${e instanceof Error ? e.message : 'error'}`);
+    } finally {
+      setBusy((s) => { const n = new Set(s); n.delete(m.id); return n; });
+    }
   }
 
   return (

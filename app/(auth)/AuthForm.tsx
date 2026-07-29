@@ -5,10 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Logo from '../components/Logo';
 import { IconEye, IconEyeOff } from '../components/icons';
+import { fetchJson } from '@/lib/fetch-json';
 
 export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const router = useRouter();
-  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -27,29 +27,28 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
     setBusy(true);
     setErr(null);
     const body = isRegister
-      ? { email: email.trim(), password, confirmPassword, companyName: companyName.trim() }
+      ? { email: email.trim(), password, confirmPassword }
       : { email: email.trim(), password };
-    const res = await fetch(isRegister ? '/api/auth/register' : '/api/auth/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    setBusy(false);
-    if (!res.ok) {
-      setErr(data.error ?? `Failed (${res.status})`);
-      return;
+    try {
+      await fetchJson(isRegister ? '/api/auth/register' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      // Root decides next stop (connect vs dashboard) based on LinkedIn state.
+      router.push('/');
+      router.refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Something went wrong — please try again.');
+      setBusy(false);
     }
-    // Root decides next stop (connect vs dashboard) based on LinkedIn state.
-    router.push('/');
-    router.refresh();
   }
 
   const canSubmit =
     !busy &&
     !!email.trim() &&
     password.length >= (isRegister ? 8 : 1) &&
-    (!isRegister || (!!companyName.trim() && password === confirmPassword));
+    (!isRegister || password === confirmPassword);
 
   return (
     <main className="center-wrap">
@@ -62,20 +61,7 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
 
         {err && <div className="notice bad" style={{ marginTop: 12 }}>{err}</div>}
 
-        {isRegister && (
-          <>
-            <label style={{ marginTop: 14 }}>Company name</label>
-            <input
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="Flugia"
-              autoComplete="organization"
-              onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-            />
-          </>
-        )}
-
-        <label style={{ marginTop: isRegister ? 0 : 14 }}>Email</label>
+        <label style={{ marginTop: 14 }}>Email</label>
         <input
           type="email"
           value={email}

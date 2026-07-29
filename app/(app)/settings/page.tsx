@@ -4,17 +4,22 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ConnectForm from '@/app/connect/ConnectForm';
 import { useConfirm } from '@/app/components/ConfirmDialog';
+import { fetchJson } from '@/lib/fetch-json';
 
 export default function SettingsPage() {
   const router = useRouter();
   const confirm = useConfirm();
   const [linkedinStatus, setLinkedinStatus] = useState<string>('');
+  const [disconnecting, setDisconnecting] = useState(false);
   const [msg] = useState<string | null>(null);
 
   async function loadSettings() {
-    const res = await fetch('/api/settings');
-    const data = await res.json();
-    setLinkedinStatus(data.linkedin?.status ?? 'disconnected');
+    try {
+      const data = await fetchJson<{ linkedin?: { status?: string } }>('/api/settings');
+      setLinkedinStatus(data.linkedin?.status ?? 'disconnected');
+    } catch {
+      setLinkedinStatus('disconnected');
+    }
   }
 
   useEffect(() => {
@@ -36,9 +41,14 @@ export default function SettingsPage() {
       danger: true,
     });
     if (!ok) return;
-    await fetch('/api/linkedin/connect', { method: 'DELETE' });
-    router.push('/connect');
-    router.refresh();
+    setDisconnecting(true);
+    try {
+      await fetchJson('/api/linkedin/connect', { method: 'DELETE' });
+      router.push('/connect');
+      router.refresh();
+    } catch {
+      setDisconnecting(false);
+    }
   }
 
   return (
@@ -73,7 +83,7 @@ export default function SettingsPage() {
           Status: <span className={`badge ${linkedinConnected ? 'good' : 'warn'}`}>{linkedinStatus || 'disconnected'}</span>
         </p>
         {linkedinConnected ? (
-          <button className="btn danger" onClick={disconnect}>Disconnect LinkedIn</button>
+          <button className="btn danger" onClick={disconnect} disabled={disconnecting}>{disconnecting ? 'Disconnecting…' : 'Disconnect LinkedIn'}</button>
         ) : (
           <ConnectForm embedded onConnected={onLinkedinConnected} />
         )}

@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useConfirm } from '@/app/components/ConfirmDialog';
+import { fetchJson } from '@/lib/fetch-json';
 
 interface Lead {
   id: string;
@@ -48,6 +49,7 @@ function initials(name: string) {
 export default function LeadsPage() {
   const confirm = useConfirm();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [loadingLeads, setLoadingLeads] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
 
   // Filters (run on enriched columns)
@@ -67,16 +69,34 @@ export default function LeadsPage() {
   // Profile drawer
   const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null; messages: LeadMessage[] } | null>(null);
 
+  // Filters are read from a ref so loadLeads has a stable identity (no refetch
+  // on every keystroke) and only runs on mount / Apply / Enter.
+  const filtersRef = useRef({ fIndustry, fCompany, fTitle, fName });
+  filtersRef.current = { fIndustry, fCompany, fTitle, fName };
+  const loadAbortRef = useRef<AbortController | null>(null);
+
   const loadLeads = useCallback(async () => {
+    const { fIndustry, fCompany, fTitle, fName } = filtersRef.current;
     const p = new URLSearchParams();
     if (fIndustry) p.set('industry', fIndustry);
     if (fCompany) p.set('company', fCompany);
     if (fTitle) p.set('title', fTitle);
     if (fName) p.set('name', fName);
-    const res = await fetch('/api/leads?' + p.toString());
-    const data = await res.json();
-    setLeads(data.leads ?? []);
-  }, [fIndustry, fCompany, fTitle, fName]);
+    // Cancel any in-flight request so a slow older response can't overwrite a newer one.
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+    setLoadingLeads(true);
+    try {
+      const data = await fetchJson<{ leads?: Lead[] }>('/api/leads?' + p.toString(), { signal: ac.signal });
+      setLeads(data.leads ?? []);
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') return; // superseded — keep loading for the newer request
+      setMsg('Could not load leads: ' + (e instanceof Error ? e.message : 'error'));
+    } finally {
+      if (loadAbortRef.current === ac) setLoadingLeads(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadLeads();
@@ -95,33 +115,40 @@ export default function LeadsPage() {
     if (!ids.length) return;
     setBusyGen(true);
     setMsg(null);
-    const res = await fetch('/api/leads/generate', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ leadIds: ids }),
-    });
-    const data = await res.json();
-    setBusyGen(false);
-    if (!res.ok) { setMsg('Generate failed: ' + (data.error ?? res.status)); return; }
-    const byId: Record<string, string> = {};
-    (data.drafts as Array<{ leadId: string; body: string }>).forEach((d) => { byId[d.leadId] = d.body; });
-    setDrafts(byId);
-    setSent(new Set());
-    setPreview(ids.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l));
+    try {
+      const data = await fetchJson<{ drafts: Array<{ leadId: string; body: string }> }>('/api/leads/generate', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ leadIds: ids }),
+      });
+      const byId: Record<string, string> = {};
+      data.drafts.forEach((d) => { byId[d.leadId] = d.body; });
+      setDrafts(byId);
+      setSent(new Set());
+      setPreview(ids.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l));
+    } catch (e) {
+      setMsg('Generate failed: ' + (e instanceof Error ? e.message : 'error'));
+    } finally {
+      setBusyGen(false);
+    }
   }
 
   async function sendOne(id: string): Promise<boolean> {
     const body = (drafts[id] ?? '').trim();
     if (!body) return false;
     setSending((s) => new Set(s).add(id));
-    const res = await fetch(`/api/leads/${id}/send`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ body }),
-    });
-    const data = await res.json();
-    setSending((s) => { const n = new Set(s); n.delete(id); return n; });
-    if (!res.ok) { setMsg((data.error ?? `Send failed (${res.status})`)); return false; }
-    setSent((s) => new Set(s).add(id));
-    return true;
+    try {
+      await fetchJson(`/api/leads/${id}/send`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      setSent((s) => new Set(s).add(id));
+      return true;
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Send failed.');
+      return false;
+    } finally {
+      setSending((s) => { const n = new Set(s); n.delete(id); return n; });
+    }
   }
   async function sendAll() {
     for (const l of preview ?? []) {
@@ -137,9 +164,13 @@ export default function LeadsPage() {
   }
 
   async function openProfile(lead: Lead) {
-    const res = await fetch(`/api/leads/${lead.id}`);
-    const data = await res.json();
-    setProfileModal({ lead, enrichment: data.enrichment, messages: data.messages ?? [] });
+    try {
+      const data = await fetchJson<{ enrichment: Record<string, unknown> | null; messages?: LeadMessage[] }>(`/api/leads/${lead.id}`);
+      setProfileModal({ lead, enrichment: data.enrichment, messages: data.messages ?? [] });
+    } catch {
+      // Still open the drawer with the basic info we already have.
+      setProfileModal({ lead, enrichment: null, messages: [] });
+    }
   }
   async function removeLead(id: string) {
     if (!(await confirm({ title: 'Delete lead', message: 'Delete this lead?', confirmLabel: 'Delete', danger: true }))) return;
@@ -158,10 +189,17 @@ export default function LeadsPage() {
   async function setKnown(id: string, known: boolean) {
     setLeads((p) => p.map((l) => (l.id === id ? { ...l, known } : l))); // optimistic
     setProfileModal((m) => (m && m.lead.id === id ? { ...m, lead: { ...m.lead, known } } : m));
-    await fetch(`/api/leads/${id}`, {
-      method: 'PATCH', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ known }),
-    });
+    try {
+      await fetchJson(`/api/leads/${id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ known }),
+      });
+    } catch {
+      // Revert the optimistic toggle if the save failed.
+      setLeads((p) => p.map((l) => (l.id === id ? { ...l, known: !known } : l)));
+      setProfileModal((m) => (m && m.lead.id === id ? { ...m, lead: { ...m.lead, known: !known } } : m));
+      setMsg('Could not update — please try again.');
+    }
   }
 
   const statusBadge = (s: string | null) =>
@@ -189,10 +227,10 @@ export default function LeadsPage() {
           <span className="muted" style={{ fontSize: 12 }}>Filters run on enriched fields.</span>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input style={{ flex: '1 1 150px' }} placeholder="Industry" value={fIndustry} onChange={(e) => setFIndustry(e.target.value)} />
-          <input style={{ flex: '1 1 150px' }} placeholder="Company" value={fCompany} onChange={(e) => setFCompany(e.target.value)} />
-          <input style={{ flex: '1 1 150px' }} placeholder="Title" value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
-          <input style={{ flex: '1 1 150px' }} placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Industry" value={fIndustry} onChange={(e) => setFIndustry(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Company" value={fCompany} onChange={(e) => setFCompany(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Title" value={fTitle} onChange={(e) => setFTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
+          <input style={{ flex: '1 1 150px' }} placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
           <button className="btn" onClick={loadLeads} style={{ flexShrink: 0 }}>Apply filters</button>
         </div>
       </div>
@@ -258,7 +296,10 @@ export default function LeadsPage() {
                   </tr>
                 );
               })}
-              {leads.length === 0 && (
+              {loadingLeads && leads.length === 0 && (
+                <tr><td colSpan={6} className="muted">Loading…</td></tr>
+              )}
+              {!loadingLeads && leads.length === 0 && (
                 <tr><td colSpan={6} className="muted">No leads yet — head to <Link href="/connections">Connections</Link> to add matching connections.</td></tr>
               )}
             </tbody>
