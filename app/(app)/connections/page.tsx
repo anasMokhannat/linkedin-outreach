@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { fetchJson } from '@/lib/fetch-json';
 
 interface Staged {
   profileUrl: string;
@@ -20,49 +21,73 @@ export default function ConnectionsPage() {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [conns, setConns] = useState<Staged[]>([]);
   const [connsLoaded, setConnsLoaded] = useState(false);
+  const [connected, setConnected] = useState<boolean | null>(null); // null = still checking
   const [syncStatus, setSyncStatus] = useState<string>('none');
   const [selConns, setSelConns] = useState<Set<string>>(new Set());
   const autoSynced = useRef(false);
 
   const loadConnections = useCallback(async () => {
-    const res = await fetch('/api/connections');
-    const data = await res.json();
-    setSyncStatus(data.status ?? 'none');
-    setConns(data.connections ?? []);
-    setConnsLoaded(true);
+    try {
+      const data = await fetchJson<{ status?: string; connections?: Staged[] }>('/api/connections');
+      setSyncStatus(data.status ?? 'none');
+      setConns(data.connections ?? []);
+    } catch (e) {
+      setMsg('Could not load connections: ' + (e instanceof Error ? e.message : 'error'));
+    } finally {
+      setConnsLoaded(true);
+    }
   }, []);
 
   const sync = useCallback(async () => {
     setBusy((p) => ({ ...p, sync: true }));
-    const res = await fetch('/api/sync/connections', { method: 'POST' });
-    const data = await res.json();
-    setBusy((p) => ({ ...p, sync: false }));
-    if (res.ok) {
+    try {
+      await fetchJson('/api/sync/connections', { method: 'POST' });
       await loadConnections();
       return true;
+    } catch (e) {
+      setMsg('Sync failed: ' + (e instanceof Error ? e.message : 'error'));
+      return false;
+    } finally {
+      setBusy((p) => ({ ...p, sync: false }));
     }
-    setMsg('Sync failed: ' + (data.error ?? res.status));
-    return false;
   }, [loadConnections]);
 
-  // Auto-fetch on open when never synced or stale (>24h).
+  // Before loading anything, check whether LinkedIn is actually connected.
   useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        setConnected((data.linkedin?.status ?? 'disconnected') === 'connected');
+      } catch {
+        setConnected(false);
+      }
+    })();
+  }, []);
+
+  // Auto-fetch on open when never synced or stale (>24h) — only once connected.
+  useEffect(() => {
+    if (connected !== true) return;
     if (autoSynced.current) return;
     autoSynced.current = true;
     (async () => {
-      const res = await fetch('/api/connections?meta=1');
-      const m = await res.json();
-      setSyncStatus(m.status ?? 'none');
-      const stale = !m.lastSyncAt || Date.now() - new Date(m.lastSyncAt).getTime() > STALE_MS;
-      if ((m.count ?? 0) === 0 || stale) {
-        setMsg('Refreshing your connections…');
-        await sync();
-        setMsg(null);
-      } else {
-        loadConnections();
+      try {
+        const m = await fetchJson<{ status?: string; lastSyncAt?: string | null; count?: number }>('/api/connections?meta=1');
+        setSyncStatus(m.status ?? 'none');
+        const stale = !m.lastSyncAt || Date.now() - new Date(m.lastSyncAt).getTime() > STALE_MS;
+        if ((m.count ?? 0) === 0 || stale) {
+          setMsg('Refreshing your connections…');
+          await sync();
+          setMsg(null);
+        } else {
+          await loadConnections();
+        }
+      } catch {
+        // Meta check failed — fall back to a direct load so we leave "Loading…".
+        await loadConnections();
       }
     })();
-  }, [sync, loadConnections]);
+  }, [connected, sync, loadConnections]);
 
   const eligibleUrls = useMemo(() => conns.filter((c) => !c.alreadyLead).map((c) => c.profileUrl), [conns]);
   const allSelected = eligibleUrls.length > 0 && eligibleUrls.every((u) => selConns.has(u));
@@ -79,17 +104,18 @@ export default function ConnectionsPage() {
     if (!chosen.length) return setMsg('Nothing new selected.');
     setBusy((p) => ({ ...p, add: true }));
     setMsg(`Adding ${chosen.length} lead(s) and enriching…`);
-    const res = await fetch('/api/leads/select', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ connections: chosen }),
-    });
-    const data = await res.json();
-    setBusy((p) => ({ ...p, add: false }));
-    if (!res.ok) setMsg('Save failed: ' + (data.error ?? res.status));
-    else {
+    try {
+      const data = await fetchJson<{ inserted: number; enriched?: number }>('/api/leads/select', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ connections: chosen }),
+      });
       setMsg(`Added ${data.inserted} lead(s)${typeof data.enriched === 'number' ? ` · enriched ${data.enriched}` : ''}. View them on the Leads page.`);
       setSelConns(new Set());
       loadConnections();
+    } catch (e) {
+      setMsg('Save failed: ' + (e instanceof Error ? e.message : 'error'));
+    } finally {
+      setBusy((p) => ({ ...p, add: false }));
     }
   }
 
@@ -106,8 +132,19 @@ export default function ConnectionsPage() {
         <Link className="btn secondary" href="/leads">Go to Leads</Link>
       </div>
 
-      {msg && <div className="notice">{msg}</div>}
+      {msg && connected === true && <div className="notice">{msg}</div>}
 
+      {connected === null ? (
+        <div className="card muted">Loading…</div>
+      ) : connected === false ? (
+        <div className="card">
+          <h2 style={{ marginTop: 0 }}>LinkedIn not connected</h2>
+          <p className="muted" style={{ fontSize: 13.5 }}>
+            Connect your LinkedIn account to sync and browse your connections.
+          </p>
+          <Link className="btn" href="/connect">Connect LinkedIn</Link>
+        </div>
+      ) : (
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2 style={{ margin: 0 }}>
@@ -148,6 +185,7 @@ export default function ConnectionsPage() {
         </div>
         {conns.length > 500 && <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Showing first 500 of {conns.length}.</p>}
       </div>
+      )}
     </div>
   );
 }

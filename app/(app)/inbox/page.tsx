@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import CampaignChat, { type ChatLead } from '@/app/components/CampaignChat';
+import { fetchJson } from '@/lib/fetch-json';
 
 export default function InboxPage() {
   const [leads, setLeads] = useState<ChatLead[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [initialLeadId, setInitialLeadId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -16,10 +18,14 @@ export default function InboxPage() {
 
   useEffect(() => {
     (async () => {
-      const res = await fetch('/api/inbox');
-      const data = await res.json();
-      setLeads(data.leads ?? []);
-      setLoaded(true);
+      try {
+        const data = await fetchJson<{ leads?: ChatLead[] }>('/api/inbox');
+        setLeads(data.leads ?? []);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load conversations.');
+      } finally {
+        setLoaded(true);
+      }
     })();
   }, []);
 
@@ -27,6 +33,8 @@ export default function InboxPage() {
     <div className="inbox-full">
       {!loaded ? (
         <div className="chat-empty">Loading…</div>
+      ) : error ? (
+        <div className="chat-empty">{error}</div>
       ) : leads.length === 0 ? (
         <div className="chat-empty">
           No conversations yet — add leads to a campaign to start messaging them.

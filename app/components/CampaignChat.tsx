@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchJson } from '@/lib/fetch-json';
 
 export interface ChatLead {
   leadId: string;
@@ -47,15 +48,24 @@ export default function CampaignChat({ leads, initialLeadId }: { leads: ChatLead
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
+  const reqIdRef = useRef(0);
 
   const load = useCallback(async (leadId: string) => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     setErr(null);
-    const res = await fetch(`/api/leads/${leadId}/conversation`);
-    const data = await res.json();
-    setMessages(data.messages ?? []);
-    setHasChat(data.hasChat ?? false);
-    setLoading(false);
+    try {
+      const data = await fetchJson<{ messages?: ChatMessage[]; hasChat?: boolean }>(`/api/leads/${leadId}/conversation`);
+      if (reqId !== reqIdRef.current) return; // a newer conversation was opened — ignore this stale response
+      setMessages(data.messages ?? []);
+      setHasChat(data.hasChat ?? false);
+    } catch (e) {
+      if (reqId !== reqIdRef.current) return;
+      setErr(e instanceof Error ? e.message : 'Failed to load the conversation.');
+      setMessages([]);
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
   }, []);
 
   // Open a specific lead when asked (e.g. arriving from a notification).
@@ -75,17 +85,18 @@ export default function CampaignChat({ leads, initialLeadId }: { leads: ChatLead
     if (!active || !text.trim()) return;
     setSending(true);
     setErr(null);
-    const res = await fetch(`/api/leads/${active}/chat`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: text.trim() }),
-    });
-    const data = await res.json();
-    setSending(false);
-    if (!res.ok) setErr(data.error ?? `Failed (${res.status})`);
-    else {
+    try {
+      await fetchJson(`/api/leads/${active}/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: text.trim() }),
+      });
       setText('');
       load(active);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to send.');
+    } finally {
+      setSending(false);
     }
   }
 
@@ -168,7 +179,7 @@ export default function CampaignChat({ leads, initialLeadId }: { leads: ChatLead
               </button>
             </div>
             <div className="muted" style={{ fontSize: 11.5, padding: '0 16px 10px', textAlign: 'center' }}>
-              Replies count toward your sending limit — 25/day · 100/week.
+              Replies to existing conversations aren’t limited — the daily cap only applies to new outreach.
             </div>
           </>
         ) : (
