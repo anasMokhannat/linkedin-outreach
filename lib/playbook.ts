@@ -285,6 +285,11 @@ export const FLUGIA_VALUE_PROP =
 // --- ICP: which connections are worth surfacing (in-code, not user-facing) ---
 // Role-based for now (headlines only expose free text pre-enrichment); we refine
 // with real industry/company-size once a connection is enriched into a lead.
+//
+// DECISION-MAKERS ONLY — roles with the authority to buy a product/SaaS. We
+// deliberately exclude individual contributors, team/tech leads, project /
+// product / program / account managers, generic "managers", CRM operators, and
+// pure advisors/consultants who don't hold a budget.
 const ICP_ROLE_KEYWORDS = [
   // C-level (acronyms + full forms) + generic "chief"
   'ceo', 'chief executive',
@@ -292,42 +297,34 @@ const ICP_ROLE_KEYWORDS = [
   'cfo', 'chief financial', 'chief finance',
   'cmo', 'chief marketing',
   'cto', 'chief technology', 'chief technical',
-  'crm', 'customer relationship', 'chief revenue', 'cro',
+  'chief revenue', 'cro',
   'cio', 'chief information', 'cpo', 'chief product', 'cso', 'chief strategy', 'chief', 'c-level',
   // Founder / owner / entrepreneur
-  'founder', 'co-founder', 'cofounder', 'co founder', 'fondateur', 'fondatrice', 'co-fondateur', 'cofondateur',
+  'founder', 'co-founder', 'cofounder', 'co founder', 'fondateur', 'fondatrice', 'co-fondateur', 'cofondateur', 'fondateur associé',
   'owner', 'co-owner', 'propriétaire', 'proprietaire', 'entrepreneur', 'entrepreneure', 'entrepreneuse',
   'solopreneur', 'solo-preneur', 'patron', 'dirigeant', 'dirigeante',
-  // Independent / freelance / consultant
+  'auto-entrepreneur', 'micro-entrepreneur', 'porteur de projet',
+  "chef d'entreprise", "chef d'établissement", "chef d'etablissement",
+  // Self-employed / independent (owner of their own practice)
   'indépendant', 'independant', 'independent', 'self-employed', 'self employed', 'à son compte', 'freelance', 'freelancer',
-  'consultant', 'consultante', 'consulting', 'conseil', 'conseiller', 'conseillère', 'advisor', 'advisory',
   // President / chair
-  'president', 'président', 'présidente', 'presidente', 'chairman', 'chairwoman', 'chairperson', 'chair', 'chairaman',
+  'president', 'président', 'présidente', 'presidente', 'chairman', 'chairwoman', 'chairperson', 'chair',
   // VP
   'vp', 'v.p', 'vice president', 'vice-president', 'vice président', 'vice-président', 'svp', 'evp', 'avp',
-  // Director / Directeur
+  // Director / Directeur (function heads with budget)
   'director', 'director of', 'directrice', 'directeur', 'managing director', 'directeur général', 'directeur general',
   'directrice générale', 'general manager', 'directeur associé', 'board member', 'board director', 'administrateur',
-  // Head of / Lead
-  'head of', 'head,', 'responsable', 'lead', 'team lead', 'tech lead', 'department head', 'chef de',
-  // Manager (broad, incl. project/product/program)
-  'manager', 'management', 'gérant', 'gerant', 'gestionnaire', 'project manager', 'chef de projet',
-  'product manager', 'program manager', 'programme manager', 'account manager',
-  // Partner / Associate
-  'partner', 'partenaire', 'associé', 'associée', 'associe', 'associate', 'principal',
-  // Secretary General
-  'secretary general', 'secretary-general', 'general secretary', 'secrétaire général', 'secretaire general',
-  'secrétaire générale',
-  // French titles & common acronyms
-  'pdg', 'président-directeur', 'president-directeur', 'directeur général', 'directrice générale',
   'directeur général adjoint', 'directeur financier', 'directrice financière', 'daf', 'directeur administratif',
   'directeur marketing', 'directrice marketing', 'directeur commercial', 'directrice commerciale',
   'directeur technique', 'directrice technique', 'directeur des opérations', 'directeur des systèmes', 'dsi',
   'drh', 'directeur des ressources humaines', 'directeur de', 'directrice de',
-  "chef d'entreprise", "chef d'établissement", "chef d'etablissement", 'cadre dirigeant', 'gérant associé',
-  'auto-entrepreneur', 'micro-entrepreneur', 'porteur de projet',
-  'responsable marketing', 'responsable commercial', 'responsable de', 'responsable des',
-  'chef de produit', 'cheffe de projet', 'chef de projet', 'fondateur associé', 'co-gérant',
+  'pdg', 'président-directeur', 'president-directeur', 'cadre dirigeant',
+  // Owner-manager (gérant of an SME) & partners / co-owners
+  'gérant', 'gerant', 'gérant associé', 'co-gérant', 'partner', 'partenaire', 'associé', 'associée', 'associe',
+  // Head of a function (owns the budget for their area)
+  'head of', 'department head', 'responsable', 'responsable marketing', 'responsable commercial', 'responsable de', 'responsable des',
+  // Secretary General (top executive)
+  'secretary general', 'secretary-general', 'general secretary', 'secrétaire général', 'secretaire general', 'secrétaire générale',
 ];
 
 /** Whether a connection matches FLUGIA's ICP (decision-maker roles) — headline-based. */
