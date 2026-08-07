@@ -322,7 +322,7 @@ const ICP_ROLE_KEYWORDS = [
   // Owner-manager (gérant of an SME) & partners / co-owners
   'gérant', 'gerant', 'gérant associé', 'co-gérant', 'partner', 'partenaire', 'associé', 'associée', 'associe',
   // Head of a function (owns the budget for their area)
-  'head of', 'department head', 'responsable', 'responsable marketing', 'responsable commercial', 'responsable de', 'responsable des',
+  'head of', 'department head', 
   // Secretary General (top executive)
   'secretary general', 'secretary-general', 'general secretary', 'secrétaire général', 'secretaire general', 'secrétaire générale',
 ];
