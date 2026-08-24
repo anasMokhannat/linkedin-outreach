@@ -278,7 +278,8 @@ export const FLUGIA_COMPANY = {
 };
 
 // A generic goal for a first touch (there is no per-campaign CTA anymore).
-export const FLUGIA_GOAL = 'Démarrer une conversation authentique et utile (pas de pitch).';
+export const FLUGIA_GOAL =
+  'Obtenir un court rendez-vous (appel) pour présenter comment FLUGIA peut aider ce prospect — proposer ce rdv de façon naturelle, pertinente et sans pression.';
 export const FLUGIA_VALUE_PROP =
   "FLUGIA aide les entreprises à exécuter plus, mieux et plus vite grâce à des agents IA supervisés.";
 
