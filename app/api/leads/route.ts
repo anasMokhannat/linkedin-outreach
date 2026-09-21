@@ -42,15 +42,17 @@ export async function GET(req: NextRequest) {
     }
     if (url.searchParams.get('enriched') === 'true') query = query.not('enriched_at', 'is', null);
 
-    const { data: leads, error } = await query;
-    if (error) throw new Error(error.message);
-
     // Latest message per lead (for the preview / status in the send flow).
-    const { data: msgs } = await svc
+    // Independent of the leads query → run both in parallel.
+    const msgsQuery = svc
       .from('messages')
       .select('lead_id, status, body, created_at')
       .eq('account_id', accountId)
       .order('created_at', { ascending: false });
+
+    const [{ data: leads, error }, { data: msgs }] = await Promise.all([query, msgsQuery]);
+    if (error) throw new Error(error.message);
+
     const latest = new Map<string, { status: string; body: string }>();
     (msgs ?? []).forEach((m) => {
       if (!latest.has(m.lead_id)) latest.set(m.lead_id, { status: m.status, body: m.body });

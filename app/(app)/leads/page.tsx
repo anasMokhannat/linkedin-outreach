@@ -61,6 +61,8 @@ export default function LeadsPage() {
   // Selection + send flow
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
   const [busyGen, setBusyGen] = useState(false);
+  const [langModal, setLangModal] = useState<{ ids: string[] } | null>(null);
+  const [genLang, setGenLang] = useState('auto');
   const [preview, setPreview] = useState<Lead[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sent, setSent] = useState<Set<string>>(new Set());
@@ -110,7 +112,22 @@ export default function LeadsPage() {
     setSelLeads(allSelected ? new Set() : new Set(leads.map((l) => l.id)));
   }
 
-  async function generate(idsArg?: string[]) {
+  // Open the language picker for a batch of lead ids; generation runs on confirm.
+  function openLangModal(ids: string[]) {
+    if (!ids.length) return;
+    setGenLang('auto');
+    setLangModal({ ids });
+  }
+  function confirmGenerate() {
+    if (!langModal) return;
+    const ids = langModal.ids;
+    const language = genLang;
+    setLangModal(null);
+    setSelLeads(new Set(ids));
+    generate(ids, language);
+  }
+
+  async function generate(idsArg?: string[], language = 'auto') {
     const ids = idsArg ?? Array.from(selLeads);
     if (!ids.length) return;
     setBusyGen(true);
@@ -118,7 +135,7 @@ export default function LeadsPage() {
     try {
       const data = await fetchJson<{ drafts: Array<{ leadId: string; body: string }> }>('/api/leads/generate', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ leadIds: ids }),
+        body: JSON.stringify({ leadIds: ids, language }),
       });
       const byId: Record<string, string> = {};
       data.drafts.forEach((d) => { byId[d.leadId] = d.body; });
@@ -240,7 +257,7 @@ export default function LeadsPage() {
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2 style={{ margin: 0 }}>{leads.length} lead{leads.length === 1 ? '' : 's'}</h2>
           {selLeads.size > 0 && (
-            <button className="btn" onClick={() => generate()} disabled={busyGen}>
+            <button className="btn" onClick={() => openLangModal(Array.from(selLeads))} disabled={busyGen}>
               {busyGen ? 'Generating…' : `Generate ${selLeads.size} message${selLeads.size === 1 ? '' : 's'}`}
             </button>
           )}
@@ -362,6 +379,37 @@ export default function LeadsPage() {
         </div>
       )}
 
+      {/* Language picker → generate */}
+      {langModal && (
+        <div className="modal-backdrop" onClick={() => setLangModal(null)}>
+          <div className="modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <h2 style={{ margin: 0 }}>Message language</h2>
+              <button className="btn ghost sm" onClick={() => setLangModal(null)}>Close</button>
+            </div>
+            <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+              {langModal.ids.length} lead{langModal.ids.length === 1 ? '' : 's'} — choose the language to generate in.
+            </p>
+            <div style={{ display: 'grid', gap: 8, margin: '12px 0 4px' }}>
+              {[
+                { v: 'auto', label: 'Auto — the lead’s profile language' },
+                { v: 'en', label: 'English' },
+                { v: 'fr', label: 'Français' },
+                { v: 'nl', label: 'Nederlands' },
+              ].map((o) => (
+                <label key={o.v} className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                  <input type="radio" name="genlang" style={{ width: 'auto' }} checked={genLang === o.v} onChange={() => setGenLang(o.v)} />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+            <button className="btn" style={{ marginTop: 12, width: '100%' }} onClick={confirmGenerate}>
+              Generate {langModal.ids.length} message{langModal.ids.length === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Profile drawer */}
       {profileModal && (
         <LeadDrawer
@@ -369,7 +417,7 @@ export default function LeadsPage() {
           enrichment={profileModal.enrichment}
           messages={profileModal.messages}
           onClose={() => setProfileModal(null)}
-          onGenerate={() => { const id = profileModal.lead.id; setProfileModal(null); setSelLeads(new Set([id])); generate([id]); }}
+          onGenerate={() => { const id = profileModal.lead.id; setProfileModal(null); openLangModal([id]); }}
           onDelete={async () => { await removeLead(profileModal.lead.id); setProfileModal(null); }}
           onSetKnown={(v) => setKnown(profileModal.lead.id, v)}
         />

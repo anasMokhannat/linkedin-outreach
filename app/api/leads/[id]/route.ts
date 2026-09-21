@@ -11,12 +11,16 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   try {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
-    const { data: lead } = await svc
-      .from('leads')
-      .select('*')
-      .eq('id', params.id)
-      .eq('account_id', accountId)
-      .maybeSingle();
+    // The lead and its messages are independent → fetch both in parallel.
+    const [{ data: lead }, { data: messages }] = await Promise.all([
+      svc.from('leads').select('*').eq('id', params.id).eq('account_id', accountId).maybeSingle(),
+      svc
+        .from('messages')
+        .select('id, body, status, model, created_at, sent_at')
+        .eq('account_id', accountId)
+        .eq('lead_id', params.id)
+        .order('created_at', { ascending: false }),
+    ]);
     if (!lead) return json({ error: 'Lead not found' }, 404);
     // Enrichment detail now lives on the lead row — assemble the shape the
     // profile drawer expects from the lead's own columns.
@@ -28,14 +32,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       company: lead.company ?? null,
       recent_posts: lead.recent_posts ?? null,
     };
-    // Generated messages for this lead (drafts + sent), newest first.
-    const { data: messages } = await svc
-      .from('messages')
-      .select('id, body, status, model, created_at, sent_at')
-      .eq('account_id', accountId)
-      .eq('lead_id', params.id)
-      .order('created_at', { ascending: false });
-    return json({ lead, enrichment: enrichment ?? null, messages: messages ?? [] });
+    return json({ lead, enrichment, messages: messages ?? [] });
   } catch (err) {
     return errorResponse(err);
   }

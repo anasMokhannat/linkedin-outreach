@@ -11,17 +11,11 @@ export async function GET() {
     const userId = await requireUserId();
     const svc = createSupabaseServiceClient();
 
-    const { data: user } = await svc
-      .from('users')
-      .select('email, company_name')
-      .eq('id', userId)
-      .maybeSingle();
-
-    const { data: account } = await svc
-      .from('linkedin_accounts')
-      .select('status, display_name, last_validated')
-      .eq('user_id', userId)
-      .maybeSingle();
+    // Independent lookups → run in parallel.
+    const [{ data: user }, { data: account }] = await Promise.all([
+      svc.from('users').select('email, company_name').eq('id', userId).maybeSingle(),
+      svc.from('linkedin_accounts').select('status, display_name, last_validated').eq('user_id', userId).maybeSingle(),
+    ]);
 
     return json({ user: user ?? {}, linkedin: account ?? { status: 'disconnected' } });
   } catch (err) {

@@ -4,6 +4,7 @@ import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { unipileConnectWithCookie, unipileDeleteAccount } from '@/lib/unipile';
 import { finalizeConnection } from '@/lib/connect';
+import { signUserSession, USER_COOKIE, sessionCookieOptions } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
  */
 export async function DELETE() {
   try {
+    const userId = await requireUserId();
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
     const { data: account } = await svc
@@ -63,7 +65,10 @@ export async function DELETE() {
       .update({ status: 'disconnected', user_id: null, unipile_account_id: null })
       .eq('id', accountId);
 
-    return NextResponse.json({ ok: true, status: 'disconnected' });
+    // Drop the baked account id from the session cookie (the account is detached).
+    const res = NextResponse.json({ ok: true, status: 'disconnected' });
+    res.cookies.set(USER_COOKIE, signUserSession(userId, null), sessionCookieOptions());
+    return res;
   } catch (err) {
     return errorResponse(err);
   }
