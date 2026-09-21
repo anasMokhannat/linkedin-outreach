@@ -127,7 +127,7 @@ If no sector matches, don't reference any feature — stay on the human/pain sid
 - OPTIONAL secondary CTA: you MAY add one short, soft line offering a quick demo/chat if they'd rather talk first — but keep it clearly secondary to the link, and drop it entirely if it clutters the message. The website is always the main ask; the meeting never overshadows it.
 
 # WRITE LIKE A REAL PERSON (not an AI, not a marketer)
-Type it like you would quickly into LinkedIn, to one person, on your phone: contractions, plain words, uneven rhythm, short sentences, the odd fragment. One clear idea, not three balanced ones — no tidy marketing cadence. It should sound like you noticed something about them. If it reads like a brand/newsletter, loosen it.
+Type it like you would quickly into LinkedIn, to one person, on your phone: contractions, plain words, uneven rhythm, short sentences, the odd fragment. One clear idea, not three balanced ones — no tidy marketing cadence. It should sound like you noticed something about them. If it reads like a brand/newsletter, loosen it. Any wording shown in quotes anywhere in these instructions is only an example for inspiration — never copy it verbatim; write your own, so regenerating yields a genuinely different message each time.
 
 # HARD BANS
 - No AI/template tells: "I hope this finds you well", "I wanted to reach out", "I came across your profile", "In today's fast-paced world", "As a {role}, you know…", "I couldn't help but notice". Go straight to the specific hook.
@@ -202,8 +202,15 @@ export async function generateMessage(
   // buried JSON field, so we state it as its own high-priority instruction).
   const who = ctx.firstName?.trim() || 'this person';
   const relationshipDirective = ctx.knownContact
-    ? `RELATIONSHIP = KNOWN — TOP PRIORITY. The sender is already connected with ${who}, so the TONE is warm and familiar: a casual first-name greeting (e.g. "Salut ${who}," or "Hi ${who},"), relaxed everyday wording, and a friendly sign-off. IMPORTANT: this changes tone ONLY. You have NO record of any past conversation, meeting, call or shared history — so do NOT reference, imply or invent one (no "it's been a while", "great catching up", "as we discussed", "hope you've been well since..."). Familiarity shows purely in how you write, never in claims about your history together.`
-    : `RELATIONSHIP = NEW — TOP PRIORITY. The sender does NOT know ${who} yet. Write as a polished, professional first outreach: a lightly polite greeting (e.g. "Bonjour ${who}," or "Hi ${who},"), measured and respectful wording, and a simple professional sign-off. Do NOT imply you already know them or use over-familiar language.`;
+    ? `RELATIONSHIP = KNOWN — TOP PRIORITY. This OVERRIDES the hook / personalization steps of the main prompt. The sender already knows ${who}, so this is NOT a researched cold outreach — it's a quick, friendly heads-up between people who know each other.
+DO NOT open with a profile hook. Do NOT reference their recent posts, their current role/title, their company, their industry, or anything from their profile/activity, and do NOT try to personalize from their data. Ignore the "first body line only this person would receive" rule here.
+Instead, write a short casual message that naturally hits the beats below — but in YOUR OWN words and your own order. Every phrase in quotes here is ONLY an illustration of the tone/idea; NEVER reuse it verbatim. Vary the greeting, the well-wish, the way you announce FLUGIA and the whole phrasing on EVERY generation, so two messages never read alike. The beats (not a fixed template):
+1) Casual greeting + a light, generic well-wish — e.g. "Salut ${who}, j'espère que tout va bien pour toi !" (a simple well-wish like this is fine and expected; the general ban on "I hope this finds you well" is only about the stiff formal cliché).
+2) A friendly, informal announcement that you've just launched FLUGIA — e.g. "pour info, on a lancé FLUGIA…".
+3) One plain, spoken line on what it is / the value: plusieurs agents IA centralisés dans une seule plateforme, à partir de 59 €/mois.
+4) CTA: invite them to take a look at the offer — the pricing link in plain text, exactly https://flugia.com/pricing/ (you may add one soft line offering a quick chat as an optional secondary).
+Register: warm, familiar, spoken, short. In French use tutoiement everywhere (tu / ton / tes / toi) and NEVER "vous" / "votre" / "la vôtre". No corporate-pitch cliché ("Chez FLUGIA, nous aidons les entreprises…"), no benefit chains. IMPORTANT: a generic well-wish is fine, but you have NO record of any past conversation, meeting or shared history — do NOT invent a specific one (no "ça faisait longtemps qu'on s'est pas parlé", "comme convenu", "suite à notre échange"). And do NOT settle into one template — change the opening, wording and rhythm each time so a re-generation gives a genuinely different message.`
+    : `RELATIONSHIP = NEW — TOP PRIORITY. The sender does NOT know ${who} yet. Write as a polished, professional first outreach: a lightly polite greeting (e.g. "Bonjour ${who}," or "Hi ${who},"), measured and respectful wording, and a simple professional sign-off. In French use vouvoiement (vous / votre). Do NOT imply you already know them or use over-familiar language.`;
 
   const requestBody = {
     model,
