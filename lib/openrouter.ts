@@ -34,6 +34,12 @@ export interface GroundingContext {
   knownContact?: boolean;
   /** Pre-selected positioning slice (retrieve-by-key) for this lead. */
   strategy?: LeadStrategy | null;
+  /**
+   * Target output language. When set (e.g. "English", "French", "Dutch") the
+   * message is written entirely in it. When null/undefined the language is
+   * auto-detected from the lead's own profile.
+   */
+  targetLanguage?: string | null;
 }
 
 const SYSTEM_PROMPT =
@@ -144,7 +150,7 @@ Warm, curious, respectful of their time, quietly confident. Peer-to-peer and con
 A single RELATIONSHIP directive is provided per lead — follow it exactly; it sets the greeting, warmth and sign-off and overrides any default formality here.
 
 # LANGUAGE
-Write in the lead's likely language (infer from name/headline/location/posts); default to French if unclear (FLUGIA's core market is francophone). The playbook notes are partly in French — convey their meaning, never copy them verbatim.
+A LANGUAGE directive is provided as its own instruction — follow it exactly (it says whether to auto-detect the lead's language from their profile or to use a specific target language); it takes priority. The playbook/offer notes are partly in French — treat them as meaning to convey, never copy them verbatim, and write fluently in the chosen language.
 
 # OUTPUT
 Return ONLY the final message: greeting + body + short closing line, no sender name, no brackets, no subject line, no explanation, no options. Ready to send.`;
@@ -212,11 +218,18 @@ Instead, write a short casual message that naturally hits the beats below — bu
 Register: warm, familiar, spoken, short. In French use tutoiement everywhere (tu / ton / tes / toi) and NEVER "vous" / "votre" / "la vôtre". No corporate-pitch cliché ("Chez FLUGIA, nous aidons les entreprises…"), no benefit chains. IMPORTANT: a generic well-wish is fine, but you have NO record of any past conversation, meeting or shared history — do NOT invent a specific one (no "ça faisait longtemps qu'on s'est pas parlé", "comme convenu", "suite à notre échange"). And do NOT settle into one template — change the opening, wording and rhythm each time so a re-generation gives a genuinely different message.`
     : `RELATIONSHIP = NEW — TOP PRIORITY. The sender does NOT know ${who} yet. Write as a polished, professional first outreach: a lightly polite greeting (e.g. "Bonjour ${who}," or "Hi ${who},"), measured and respectful wording, and a simple professional sign-off. In French use vouvoiement (vous / votre). Do NOT imply you already know them or use over-familiar language.`;
 
+  // Explicit, imperative language directive (same reason as the relationship one).
+  const lang = ctx.targetLanguage?.trim();
+  const languageDirective = lang
+    ? `LANGUAGE = TOP PRIORITY. Write the ENTIRE message (greeting, body and closing) in ${lang}, regardless of the language of the lead's profile. Every word must be in ${lang}, fluent and natural.`
+    : `LANGUAGE = TOP PRIORITY. Auto-detect the lead's own language from their profile (name, headline, current title, recent posts, location) and write the ENTIRE message (greeting, body and closing) in THAT language. Only fall back to French if the language is genuinely impossible to tell.`;
+
   const requestBody = {
     model,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'system', content: relationshipDirective },
+      { role: 'system', content: languageDirective },
       { role: 'user', content: JSON.stringify(userPayload) },
     ],
     temperature: 0.7,

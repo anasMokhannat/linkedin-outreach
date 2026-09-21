@@ -22,9 +22,15 @@ interface EnrichedPost { text?: string }
 export async function POST(req: NextRequest) {
   try {
     const accountId = await requireAccountId();
-    const body = (await req.json().catch(() => ({}))) as { leadIds?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { leadIds?: unknown; language?: unknown };
     const leadIds = Array.isArray(body.leadIds) ? (body.leadIds as string[]).filter((x) => typeof x === 'string') : [];
     if (leadIds.length === 0) throw new HttpError(400, 'No leads selected.');
+
+    // Output language: 'auto' (or absent) → the model detects the lead's own
+    // profile language; a known code forces that language for every lead.
+    const LANGUAGES: Record<string, string> = { en: 'English', fr: 'French', nl: 'Dutch' };
+    const langCode = typeof body.language === 'string' ? body.language : 'auto';
+    const targetLanguage = LANGUAGES[langCode] ?? null;
 
     const svc = createSupabaseServiceClient();
     const { data: leads, error: leadsError } = await svc
@@ -54,6 +60,7 @@ export async function POST(req: NextRequest) {
           senderGoal: FLUGIA_GOAL,
           senderCompany: FLUGIA_COMPANY,
           knownContact: !!lead.known,
+          targetLanguage,
           strategy: selectStrategy({
             title: lead.current_title,
             industry: lead.industry,

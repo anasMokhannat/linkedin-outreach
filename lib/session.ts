@@ -46,6 +46,41 @@ export function verifySession(token: string | undefined | null): string | null {
   return accountId;
 }
 
+/**
+ * App-user session payload. We bake the LinkedIn account id into the (signed)
+ * cookie so account-scoped requests don't need a DB lookup to resolve it.
+ */
+export interface SessionData {
+  userId: string;
+  accountId: string | null;
+}
+
+/** Sign a session carrying the user id and (optionally) their LinkedIn account id. */
+export function signUserSession(userId: string, accountId?: string | null): string {
+  return signSession(JSON.stringify({ u: userId, a: accountId ?? null }));
+}
+
+/**
+ * Verify + decode a user session cookie. Handles both the new `{u,a}` payload and
+ * legacy cookies that stored only the bare user id (accountId then resolves to
+ * null, so callers fall back to a DB lookup once).
+ */
+export function readSession(token: string | undefined | null): SessionData | null {
+  const value = verifySession(token);
+  if (value == null) return null;
+  if (value.startsWith('{')) {
+    try {
+      const o = JSON.parse(value) as { u?: unknown; a?: unknown };
+      if (typeof o.u !== 'string' || !o.u) return null;
+      return { userId: o.u, accountId: typeof o.a === 'string' && o.a ? o.a : null };
+    } catch {
+      return null;
+    }
+  }
+  // Legacy token: the signed value is the bare user id.
+  return { userId: value, accountId: null };
+}
+
 /** Non-guessable token placed in the Unipile webhook URL and verified on receipt. */
 export function webhookToken(): string {
   return hmac('unipile-messages-webhook').slice(0, 24);

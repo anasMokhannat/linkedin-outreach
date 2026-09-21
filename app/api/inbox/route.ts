@@ -15,15 +15,23 @@ export async function GET() {
     const accountId = await requireAccountId();
     const svc = createSupabaseServiceClient();
 
-    // Most-recent-first message activity → lead ordering. Only sent messages
-    // count as a conversation — a generated-but-unsent draft must NOT surface a
-    // lead in the inbox.
-    const { data: msgs } = await svc
-      .from('messages')
-      .select('lead_id, created_at')
-      .eq('account_id', accountId)
-      .eq('status', 'sent')
-      .order('created_at', { ascending: false });
+    // Two independent inputs to the conversation list → run in parallel:
+    //  - most-recent-first SENT messages (a generated-but-unsent draft must NOT
+    //    surface a lead in the inbox),
+    //  - leads that already have a chat thread but no recorded message.
+    const [{ data: msgs }, { data: chatLeads }] = await Promise.all([
+      svc
+        .from('messages')
+        .select('lead_id, created_at')
+        .eq('account_id', accountId)
+        .eq('status', 'sent')
+        .order('created_at', { ascending: false }),
+      svc
+        .from('leads')
+        .select('id')
+        .eq('account_id', accountId)
+        .not('provider_chat_id', 'is', null),
+    ]);
 
     const orderedIds: string[] = [];
     const seen = new Set<string>();
@@ -31,12 +39,6 @@ export async function GET() {
       if (m.lead_id && !seen.has(m.lead_id)) { seen.add(m.lead_id); orderedIds.push(m.lead_id); }
     }
 
-    // Also include leads with an existing chat thread but no recorded message.
-    const { data: chatLeads } = await svc
-      .from('leads')
-      .select('id')
-      .eq('account_id', accountId)
-      .not('provider_chat_id', 'is', null);
     for (const l of chatLeads ?? []) {
       if (!seen.has(l.id)) { seen.add(l.id); orderedIds.push(l.id); }
     }

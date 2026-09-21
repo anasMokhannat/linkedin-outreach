@@ -3,7 +3,7 @@ import { HttpError } from '@/lib/auth';
 import { errorResponse } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { hashPassword } from '@/lib/password';
-import { signSession, USER_COOKIE, sessionCookieOptions } from '@/lib/session';
+import { signUserSession, USER_COOKIE, sessionCookieOptions } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
     if (error || !user) throw new Error(error?.message ?? 'Failed to create account.');
 
     const res = NextResponse.json({ ok: true });
-    res.cookies.set(USER_COOKIE, signSession(user.id), sessionCookieOptions());
+    // Fresh user has no LinkedIn account yet.
+    res.cookies.set(USER_COOKIE, signUserSession(user.id, null), sessionCookieOptions());
     return res;
   } catch (err) {
     return errorResponse(err);

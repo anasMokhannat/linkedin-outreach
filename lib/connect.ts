@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { HttpError } from './auth';
 import { createSupabaseServiceClient } from './supabase-server';
 import { unipileWaitForAccount, unipileGetAccountOwner, unipileEnsureMessagingWebhook } from './unipile';
-import { webhookToken } from './session';
+import { webhookToken, signUserSession, USER_COOKIE, sessionCookieOptions } from './session';
 import { publicEnv } from './env';
 import { log } from './log';
 
@@ -117,6 +117,9 @@ export async function finalizeConnection(
   });
   log.info('connect', 'connected', { accountId: accountRowId, ownerId, userId });
 
-  // The app-user session cookie is already set (they were signed in to connect).
-  return NextResponse.json({ status: 'connected' });
+  // Refresh the session cookie so it carries the (now known) account id — this
+  // lets account-scoped requests resolve it without a DB lookup.
+  const res = NextResponse.json({ status: 'connected' });
+  res.cookies.set(USER_COOKIE, signUserSession(userId, accountRowId), sessionCookieOptions());
+  return res;
 }

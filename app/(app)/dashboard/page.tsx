@@ -73,8 +73,8 @@ export default async function OverviewPage() {
           <div className="sub">Track your LinkedIn outreach &amp; performance</div>
         </div>
         <div className="spacer" />
-        <Link className="btn" href="/leads">
-          <IconPlus /> Find leads
+        <Link className="btn" href="/connections">
+          <IconPlus /> Find More Connections
         </Link>
       </div>
 

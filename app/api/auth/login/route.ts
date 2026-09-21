@@ -3,7 +3,7 @@ import { HttpError } from '@/lib/auth';
 import { errorResponse } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { verifyPassword } from '@/lib/password';
-import { signSession, USER_COOKIE, sessionCookieOptions } from '@/lib/session';
+import { signUserSession, USER_COOKIE, sessionCookieOptions } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
@@ -16,9 +16,11 @@ export async function POST(req: NextRequest) {
     if (!email || !password) throw new HttpError(400, 'Email and password are required.');
 
     const svc = createSupabaseServiceClient();
+    // Fetch the user AND their LinkedIn account id in one round-trip (embedded
+    // relationship), so we can bake accountId into the session cookie.
     const { data: user } = await svc
       .from('users')
-      .select('id, password_hash')
+      .select('id, password_hash, linkedin_accounts(id)')
       .ilike('email', email)
       .maybeSingle();
 
@@ -27,8 +29,9 @@ export async function POST(req: NextRequest) {
       throw new HttpError(401, 'Invalid email or password.');
     }
 
+    const accountId = (user.linkedin_accounts as { id: string }[] | null)?.[0]?.id ?? null;
     const res = NextResponse.json({ ok: true });
-    res.cookies.set(USER_COOKIE, signSession(user.id), sessionCookieOptions());
+    res.cookies.set(USER_COOKIE, signUserSession(user.id, accountId), sessionCookieOptions());
     return res;
   } catch (err) {
     return errorResponse(err);

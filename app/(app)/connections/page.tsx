@@ -26,68 +26,62 @@ export default function ConnectionsPage() {
   const [selConns, setSelConns] = useState<Set<string>>(new Set());
   const autoSynced = useRef(false);
 
+  // Single request: the connections endpoint already returns the account status
+  // (409 when no LinkedIn), the cached connections AND lastSyncAt — no separate
+  // /api/settings pre-check or ?meta=1 round-trip (no waterfall).
   const loadConnections = useCallback(async () => {
     try {
-      const data = await fetchJson<{ status?: string; connections?: Staged[] }>('/api/connections');
+      const res = await fetch('/api/connections');
+      if (res.status === 409) { setConnected(false); return undefined; } // no LinkedIn connected
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string; status?: string; lastSyncAt?: string | null; connections?: Staged[];
+      };
+      if (!res.ok) {
+        setConnected(true);
+        setMsg('Could not load connections: ' + (data.error ?? res.status));
+        return undefined;
+      }
+      setConnected(true);
       setSyncStatus(data.status ?? 'none');
       setConns(data.connections ?? []);
-    } catch (e) {
-      setMsg('Could not load connections: ' + (e instanceof Error ? e.message : 'error'));
+      return data;
+    } catch {
+      setConnected(true);
+      setMsg('Could not load connections.');
+      return undefined;
     } finally {
       setConnsLoaded(true);
     }
   }, []);
 
-  const sync = useCallback(async () => {
+  // Non-blocking refresh: sync in the background, then reload the list.
+  const backgroundSync = useCallback(async () => {
     setBusy((p) => ({ ...p, sync: true }));
+    setMsg('Refreshing your connections…');
     try {
       await fetchJson('/api/sync/connections', { method: 'POST' });
       await loadConnections();
-      return true;
+      setMsg(null);
     } catch (e) {
       setMsg('Sync failed: ' + (e instanceof Error ? e.message : 'error'));
-      return false;
     } finally {
       setBusy((p) => ({ ...p, sync: false }));
     }
   }, [loadConnections]);
 
-  // Before loading anything, check whether LinkedIn is actually connected.
+  // Show the cached list immediately; if it's empty or stale (>24h), refresh in
+  // the background so the page never blocks on the sync.
   useEffect(() => {
     (async () => {
-      try {
-        const res = await fetch('/api/settings');
-        const data = await res.json();
-        setConnected((data.linkedin?.status ?? 'disconnected') === 'connected');
-      } catch {
-        setConnected(false);
+      const data = await loadConnections();
+      if (!data || autoSynced.current) return;
+      const stale = !data.lastSyncAt || Date.now() - new Date(data.lastSyncAt).getTime() > STALE_MS;
+      if ((data.connections?.length ?? 0) === 0 || stale) {
+        autoSynced.current = true;
+        void backgroundSync();
       }
     })();
-  }, []);
-
-  // Auto-fetch on open when never synced or stale (>24h) — only once connected.
-  useEffect(() => {
-    if (connected !== true) return;
-    if (autoSynced.current) return;
-    autoSynced.current = true;
-    (async () => {
-      try {
-        const m = await fetchJson<{ status?: string; lastSyncAt?: string | null; count?: number }>('/api/connections?meta=1');
-        setSyncStatus(m.status ?? 'none');
-        const stale = !m.lastSyncAt || Date.now() - new Date(m.lastSyncAt).getTime() > STALE_MS;
-        if ((m.count ?? 0) === 0 || stale) {
-          setMsg('Refreshing your connections…');
-          await sync();
-          setMsg(null);
-        } else {
-          await loadConnections();
-        }
-      } catch {
-        // Meta check failed — fall back to a direct load so we leave "Loading…".
-        await loadConnections();
-      }
-    })();
-  }, [connected, sync, loadConnections]);
+  }, [loadConnections, backgroundSync]);
 
   const eligibleUrls = useMemo(() => conns.filter((c) => !c.alreadyLead).map((c) => c.profileUrl), [conns]);
   const allSelected = eligibleUrls.length > 0 && eligibleUrls.every((u) => selConns.has(u));
