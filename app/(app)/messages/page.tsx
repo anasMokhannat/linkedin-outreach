@@ -149,7 +149,7 @@ export default function MessagesPage() {
                     style={{ marginTop: 10, width: '100%', fontFamily: 'inherit', fontSize: 14, lineHeight: 1.5, resize: 'vertical' }}
                   />
                   <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
-                    <span className="muted" style={{ fontSize: 11.5 }}>{m.model ?? ''}</span>
+                    <span className="muted" style={{ fontSize: 11.5 }}></span>
                     <span className="row" style={{ gap: 8 }}>
                       <button className="btn ghost sm" onClick={() => discard(m)} disabled={isBusy || isSaving}>
                         {isBusy ? 'Discarding…' : 'Discard'}
