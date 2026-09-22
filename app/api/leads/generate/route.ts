@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { requireAccountId, HttpError } from '@/lib/auth';
+import { requireAccountId, requireUserId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
 import { generateMessage } from '@/lib/openrouter';
@@ -22,6 +22,7 @@ interface EnrichedPost { text?: string }
 export async function POST(req: NextRequest) {
   try {
     const accountId = await requireAccountId();
+    const userId = await requireUserId();
     const body = (await req.json().catch(() => ({}))) as { leadIds?: unknown; language?: unknown };
     const leadIds = Array.isArray(body.leadIds) ? (body.leadIds as string[]).filter((x) => typeof x === 'string') : [];
     if (leadIds.length === 0) throw new HttpError(400, 'No leads selected.');
@@ -33,6 +34,9 @@ export async function POST(req: NextRequest) {
     const targetLanguage = LANGUAGES[langCode] ?? null;
 
     const svc = createSupabaseServiceClient();
+    // Sender nature (associate vs partner) → drives how the message refers to FLUGIA.
+    const { data: sender } = await svc.from('users').select('writer_role').eq('id', userId).maybeSingle();
+    const senderRole = sender?.writer_role === 'associate' ? 'associate' : 'partner';
     const { data: leads, error: leadsError } = await svc
       .from('leads')
       .select('id, first_name, last_name, current_title, current_company, industry, company_size, known, recent_posts')
@@ -61,6 +65,7 @@ export async function POST(req: NextRequest) {
           senderCompany: FLUGIA_COMPANY,
           knownContact: !!lead.known,
           targetLanguage,
+          senderRole,
           strategy: selectStrategy({
             title: lead.current_title,
             industry: lead.industry,

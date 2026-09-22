@@ -11,14 +11,38 @@ export default function SettingsPage() {
   const confirm = useConfirm();
   const [linkedinStatus, setLinkedinStatus] = useState<string>('');
   const [disconnecting, setDisconnecting] = useState(false);
-  const [msg] = useState<string | null>(null);
+  const [writerRole, setWriterRole] = useState<'partner' | 'associate' | null>(null);
+  const [savingRole, setSavingRole] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
   async function loadSettings() {
     try {
-      const data = await fetchJson<{ linkedin?: { status?: string } }>('/api/settings');
+      const data = await fetchJson<{ linkedin?: { status?: string }; user?: { writer_role?: string } }>('/api/settings');
       setLinkedinStatus(data.linkedin?.status ?? 'disconnected');
+      setWriterRole(data.user?.writer_role === 'associate' ? 'associate' : 'partner');
     } catch {
       setLinkedinStatus('disconnected');
+    }
+  }
+
+  async function saveRole(role: 'partner' | 'associate') {
+    if (role === writerRole || savingRole) return;
+    const prev = writerRole;
+    setWriterRole(role); // optimistic
+    setSavingRole(true);
+    setMsg(null);
+    try {
+      await fetchJson('/api/settings', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ writerRole: role }),
+      });
+      setMsg('Type de compte mis à jour.');
+    } catch {
+      setWriterRole(prev); // revert on failure
+      setMsg('Échec de la mise à jour du type de compte.');
+    } finally {
+      setSavingRole(false);
     }
   }
 
@@ -61,6 +85,38 @@ export default function SettingsPage() {
       </div>
 
       {msg && <div className="notice">{msg}</div>}
+
+      {/* Sender nature — drives how generated messages refer to FLUGIA */}
+      <div className="card" style={{ maxWidth: 720 }}>
+        <h2 style={{ marginTop: 0 }}>Type de compte</h2>
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          Détermine la façon dont vos messages parlent de FLUGIA (partenaire qui recommande, ou membre de l&apos;équipe).
+        </p>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <label className="row" style={{ gap: 8, cursor: 'pointer', opacity: writerRole === null ? 0.5 : 1 }}>
+            <input
+              type="radio"
+              name="writerRole"
+              style={{ width: 'auto' }}
+              checked={writerRole === 'partner'}
+              disabled={writerRole === null || savingRole}
+              onChange={() => saveRole('partner')}
+            />
+            Partenaire — je revends / recommande FLUGIA
+          </label>
+          <label className="row" style={{ gap: 8, cursor: 'pointer', opacity: writerRole === null ? 0.5 : 1 }}>
+            <input
+              type="radio"
+              name="writerRole"
+              style={{ width: 'auto' }}
+              checked={writerRole === 'associate'}
+              disabled={writerRole === null || savingRole}
+              onChange={() => saveRole('associate')}
+            />
+            Associé — je fais partie de FLUGIA
+          </label>
+        </div>
+      </div>
 
       {/* Sending limits (informational) */}
       <div className="card" style={{ maxWidth: 720 }}>

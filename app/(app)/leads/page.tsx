@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useConfirm } from '@/app/components/ConfirmDialog';
 import { fetchJson } from '@/lib/fetch-json';
@@ -57,6 +57,8 @@ export default function LeadsPage() {
   const [fCompany, setFCompany] = useState('');
   const [fTitle, setFTitle] = useState('');
   const [fName, setFName] = useState('');
+  // Message-status filter (client-side, instant): all | none | draft | sent.
+  const [fStatus, setFStatus] = useState<'all' | 'none' | 'draft' | 'sent'>('all');
 
   // Selection + send flow
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
@@ -107,9 +109,17 @@ export default function LeadsPage() {
   function toggleLead(id: string) {
     setSelLeads((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
-  const allSelected = leads.length > 0 && leads.every((l) => selLeads.has(l.id));
+  // Apply the message-status filter on top of the (server-filtered) leads.
+  const visibleLeads = useMemo(() => {
+    if (fStatus === 'all') return leads;
+    if (fStatus === 'none') return leads.filter((l) => !l.messageStatus);
+    if (fStatus === 'sent') return leads.filter((l) => l.messageStatus === 'sent');
+    return leads.filter((l) => l.messageStatus === 'draft'); // generated, not sent
+  }, [leads, fStatus]);
+
+  const allSelected = visibleLeads.length > 0 && visibleLeads.every((l) => selLeads.has(l.id));
   function toggleSelectAll() {
-    setSelLeads(allSelected ? new Set() : new Set(leads.map((l) => l.id)));
+    setSelLeads(allSelected ? new Set() : new Set(visibleLeads.map((l) => l.id)));
   }
 
   // Open the language picker for a batch of lead ids; generation runs on confirm.
@@ -248,6 +258,17 @@ export default function LeadsPage() {
           <input style={{ flex: '1 1 150px' }} placeholder="Company" value={fCompany} onChange={(e) => setFCompany(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
           <input style={{ flex: '1 1 150px' }} placeholder="Title" value={fTitle} onChange={(e) => setFTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
           <input style={{ flex: '1 1 150px' }} placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') loadLeads(); }} />
+          <select
+            value={fStatus}
+            onChange={(e) => setFStatus(e.target.value as typeof fStatus)}
+            style={{ flex: '1 1 170px' }}
+            aria-label="Outreach status"
+          >
+            <option value="all">All leads</option>
+            <option value="none">Not started</option>
+            <option value="draft">Ready to send</option>
+            <option value="sent">Reached out</option>
+          </select>
           <button className="btn" onClick={loadLeads} style={{ flexShrink: 0 }}>Apply filters</button>
         </div>
       </div>
@@ -255,7 +276,7 @@ export default function LeadsPage() {
       {/* Leads table */}
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0 }}>{leads.length} lead{leads.length === 1 ? '' : 's'}</h2>
+          <h2 style={{ margin: 0 }}>{visibleLeads.length} lead{visibleLeads.length === 1 ? '' : 's'}{fStatus !== 'all' && leads.length !== visibleLeads.length ? <span className="muted" style={{ fontWeight: 400 }}> / {leads.length}</span> : null}</h2>
           {selLeads.size > 0 && (
             <button className="btn" onClick={() => openLangModal(Array.from(selLeads))} disabled={busyGen}>
               {busyGen ? 'Generating…' : `Generate ${selLeads.size} message${selLeads.size === 1 ? '' : 's'}`}
@@ -273,7 +294,7 @@ export default function LeadsPage() {
               </tr>
             </thead>
             <tbody>
-              {leads.map((l) => {
+              {visibleLeads.map((l) => {
                 const name = leadName(l);
                 return (
                   <tr key={l.id} onClick={() => openProfile(l)} style={{ cursor: 'pointer' }}>
@@ -318,6 +339,9 @@ export default function LeadsPage() {
               )}
               {!loadingLeads && leads.length === 0 && (
                 <tr><td colSpan={6} className="muted">No leads yet — head to <Link href="/connections">Connections</Link> to add matching connections.</td></tr>
+              )}
+              {!loadingLeads && leads.length > 0 && visibleLeads.length === 0 && (
+                <tr><td colSpan={6} className="muted">No leads match this filter.</td></tr>
               )}
             </tbody>
           </table>

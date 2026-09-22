@@ -14,9 +14,12 @@ export async function POST(req: NextRequest) {
       email?: unknown;
       password?: unknown;
       confirmPassword?: unknown;
+      writerRole?: unknown;
     };
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const password = typeof body.password === 'string' ? body.password : '';
+    // The nature of the sender: 'associate' (FLUGIA team) or 'partner' (reseller).
+    const writerRole = body.writerRole === 'associate' ? 'associate' : 'partner';
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'Enter a valid email.');
     if (password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
     // Confirm the password when the client sends a confirmation value.
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const { data: user, error } = await svc
       .from('users')
-      .insert({ email, password_hash: hashPassword(password) })
+      .insert({ email, password_hash: hashPassword(password), writer_role: writerRole })
       .select('id')
       .single();
     if (error || !user) throw new Error(error?.message ?? 'Failed to create account.');
