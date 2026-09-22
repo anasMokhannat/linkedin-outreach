@@ -12,6 +12,7 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [writerRole, setWriterRole] = useState<'partner' | 'associate'>('partner');
   const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
     setBusy(true);
     setErr(null);
     const body = isRegister
-      ? { email: email.trim(), password, confirmPassword }
+      ? { email: email.trim(), password, confirmPassword, writerRole }
       : { email: email.trim(), password };
     try {
       await fetchJson(isRegister ? '/api/auth/register' : '/api/auth/login', {
@@ -60,6 +61,22 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
         </p>
 
         {err && <div className="notice bad" style={{ marginTop: 12 }}>{err}</div>}
+
+        {isRegister && (
+          <>
+            <label style={{ marginTop: 14 }}>Vous êtes…</label>
+            <div style={{ display: 'grid', gap: 8, marginTop: 2 }}>
+              <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                <input type="radio" name="writerRole" style={{ width: 'auto' }} checked={writerRole === 'partner'} onChange={() => setWriterRole('partner')} />
+                Partenaire — je revends / recommande FLUGIA
+              </label>
+              <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                <input type="radio" name="writerRole" style={{ width: 'auto' }} checked={writerRole === 'associate'} onChange={() => setWriterRole('associate')} />
+                Associé — je fais partie de FLUGIA
+              </label>
+            </div>
+          </>
+        )}
 
         <label style={{ marginTop: 14 }}>Email</label>
         <input

@@ -41,6 +41,7 @@ export default function MessagesPage() {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -94,6 +95,29 @@ export default function MessagesPage() {
     }
   }
 
+  // Send a draft now (uses the current edited text). Marks it sent on success.
+  async function send(m: GenMessage) {
+    const body = (edits[m.id] ?? m.body).trim();
+    if (!body) return;
+    setNotice(null);
+    setSending((s) => new Set(s).add(m.id));
+    try {
+      await fetchJson(`/api/leads/${m.leadId}/send`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      setMessages((list) =>
+        list.map((x) => (x.id === m.id ? { ...x, status: 'sent', body, sentAt: new Date().toISOString() } : x))
+      );
+      setNotice(`Message sent to ${m.name}.`);
+    } catch (e) {
+      setNotice(`Send failed: ${e instanceof Error ? e.message : 'error'}`);
+    } finally {
+      setSending((s) => { const n = new Set(s); n.delete(m.id); return n; });
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -119,6 +143,7 @@ export default function MessagesPage() {
           const dirty = value.trim() !== m.body && value.trim().length > 0;
           const isSaving = saving.has(m.id);
           const isBusy = busy.has(m.id);
+          const isSending = sending.has(m.id);
           return (
             <div key={m.id} className="card" style={{ marginBottom: 0 }}>
               <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
@@ -151,11 +176,14 @@ export default function MessagesPage() {
                   <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
                     <span className="muted" style={{ fontSize: 11.5 }}></span>
                     <span className="row" style={{ gap: 8 }}>
-                      <button className="btn ghost sm" onClick={() => discard(m)} disabled={isBusy || isSaving}>
+                      <button className="btn ghost sm" onClick={() => discard(m)} disabled={isBusy || isSaving || isSending}>
                         {isBusy ? 'Discarding…' : 'Discard'}
                       </button>
-                      <button className="btn sm" onClick={() => save(m)} disabled={!dirty || isSaving || isBusy}>
+                      <button className="btn secondary sm" onClick={() => save(m)} disabled={!dirty || isSaving || isBusy || isSending}>
                         {isSaving ? 'Saving…' : 'Save edit'}
+                      </button>
+                      <button className="btn sm" onClick={() => send(m)} disabled={isSending || isBusy || !value.trim()}>
+                        {isSending ? 'Sending…' : 'Send'}
                       </button>
                     </span>
                   </div>

@@ -40,11 +40,20 @@ export interface GroundingContext {
    * auto-detected from the lead's own profile.
    */
   targetLanguage?: string | null;
+  /**
+   * Who the sender is: 'associate' (a FLUGIA team member — may speak as "nous")
+   * or 'partner' (an external reseller — speaks about FLUGIA in the third person).
+   * Defaults to 'partner' when unset.
+   */
+  senderRole?: 'associate' | 'partner' | null;
 }
 
 const SYSTEM_PROMPT =
 `# ROLE
-Expert LinkedIn outreach writer for FLUGIA (B2B SaaS selling AI agents to businesses). Write ONE short, highly personalized message to a prospect (the "lead") from their LinkedIn profile whose goal is to get them to visit FLUGIA's offer page (https://flugia.com/pricing/) and create an account. It must read like a genuine peer reaching out — curious, relevant, human — not a pushy salesperson — yet it ends with a direct, easy invitation to check the platform on that page.
+Expert LinkedIn outreach writer for someone who sells FLUGIA (a B2B SaaS of AI agents for businesses) — either a FLUGIA associate (team member) or an external partner/reseller. Which one is set by the SENDER IDENTITY directive provided separately; follow it. Write ONE short, highly personalized message to a prospect (the "lead") from their LinkedIn profile whose goal is to get them to visit FLUGIA's offer page (https://flugia.com/pricing/) and create an account. It must read like a genuine peer reaching out — curious, relevant, human — not a pushy salesperson — yet it ends with a direct, easy invitation to check the platform on that page.
+
+# SENDER IDENTITY
+A SENDER IDENTITY directive is provided as its own instruction — it says whether the sender is a FLUGIA associate (part of the team, may say "nous / notre plateforme") or an external partner/reseller (refers to FLUGIA in the third person, never claims to have built it). Follow it exactly for how to refer to FLUGIA.
 
 # CORE PRINCIPLE
 PRIMARY goal = drive the lead to https://flugia.com/pricing/ so they can see the platform and take an account — be direct and concrete about this, it is the main ask. SECONDARY / OPTIONAL goal = you MAY also offer a short demo/call to discuss, but only as a lighter fallback that never overshadows the link. Success = the message is relevant enough that the lead wants to click through. Anchor the message in the lead's world first so the invite feels earned — aggressive selling breaks trust, but a relevant, direct link to try the product does not.
@@ -212,7 +221,7 @@ export async function generateMessage(
 DO NOT open with a profile hook. Do NOT reference their recent posts, their current role/title, their company, their industry, or anything from their profile/activity, and do NOT try to personalize from their data. Ignore the "first body line only this person would receive" rule here.
 Instead, write a short casual message that naturally hits the beats below — but in YOUR OWN words and your own order. Every phrase in quotes here is ONLY an illustration of the tone/idea; NEVER reuse it verbatim. Vary the greeting, the well-wish, the way you announce FLUGIA and the whole phrasing on EVERY generation, so two messages never read alike. The beats (not a fixed template):
 1) Casual greeting + a light, generic well-wish — e.g. "Salut ${who}, j'espère que tout va bien pour toi !" (a simple well-wish like this is fine and expected; the general ban on "I hope this finds you well" is only about the stiff formal cliché).
-2) A friendly, informal announcement that you've just launched FLUGIA — e.g. "pour info, on a lancé FLUGIA…".
+2) A friendly, informal way of putting FLUGIA on their radar, CONSISTENT WITH THE SENDER IDENTITY directive — as your own thing if you're a FLUGIA associate (e.g. "pour info, chez FLUGIA on a lancé…"), or as something you work with / recommend if you're a partner (e.g. "pour info, je bosse avec FLUGIA…"). A partner must NEVER claim "on a lancé FLUGIA".
 3) A natural line or two on the value (balanced — concrete but not a feature list): des agents IA qui prennent en charge des tâches chronophages de ton business pour libérer du temps à ton équipe, à partir de 59 €/mois — ni trop détaillé (pas d'énumération), ni réduit au seul prix, et sans dire "centraliser".
 4) CTA: invite them to take a look at the offer — the pricing link in plain text, exactly https://flugia.com/pricing/ (you may add one soft line offering a quick chat as an optional secondary).
 Register: warm, familiar, spoken, short. In French use tutoiement everywhere (tu / ton / tes / toi) and NEVER "vous" / "votre" / "la vôtre". No corporate-pitch cliché ("Chez FLUGIA, nous aidons les entreprises…"), no benefit chains. IMPORTANT: a generic well-wish is fine, but you have NO record of any past conversation, meeting or shared history — do NOT invent a specific one (no "ça faisait longtemps qu'on s'est pas parlé", "comme convenu", "suite à notre échange"). And do NOT settle into one template — change the opening, wording and rhythm each time so a re-generation gives a genuinely different message.`
@@ -224,12 +233,18 @@ Register: warm, familiar, spoken, short. In French use tutoiement everywhere (tu
     ? `LANGUAGE = TOP PRIORITY. Write the ENTIRE message (greeting, body and closing) in ${lang}, regardless of the language of the lead's profile. Every word must be in ${lang}, fluent and natural.`
     : `LANGUAGE = TOP PRIORITY. Auto-detect the lead's own language from their profile (name, headline, current title, recent posts, location) and write the ENTIRE message (greeting, body and closing) in THAT language. Only fall back to French if the language is genuinely impossible to tell.`;
 
+  // Who the sender is → how they may refer to FLUGIA (defaults to partner).
+  const senderDirective = ctx.senderRole === 'associate'
+    ? `SENDER IDENTITY = FLUGIA ASSOCIATE (part of the FLUGIA team). You represent FLUGIA and MAY speak in the first person as the company — "nous", "notre plateforme", "chez FLUGIA", "on a lancé" — and refer to it as your own product. (Still avoid the generic corporate cliché "nous aidons les entreprises comme la vôtre à…".)`
+    : `SENDER IDENTITY = FLUGIA PARTNER (external reseller). You did NOT build, create, launch or own FLUGIA. NEVER write "on a lancé FLUGIA", "we built/created FLUGIA", "notre produit", "notre plateforme", or anything implying you are FLUGIA. Present FLUGIA in the THIRD PERSON as a solution you work with / recommend / help businesses adopt — e.g. "je bosse avec FLUGIA", "je suis partenaire FLUGIA", "je recommande une plateforme d'agents IA, FLUGIA".`;
+
   const requestBody = {
     model,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'system', content: relationshipDirective },
       { role: 'system', content: languageDirective },
+      { role: 'system', content: senderDirective },
       { role: 'user', content: JSON.stringify(userPayload) },
     ],
     temperature: 0.7,
