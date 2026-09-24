@@ -37,13 +37,22 @@ export async function POST(req: NextRequest) {
     // Sender nature (associate vs partner) → drives how the message refers to FLUGIA.
     const { data: sender } = await svc.from('users').select('writer_role').eq('id', userId).maybeSingle();
     const senderRole = sender?.writer_role === 'associate' ? 'associate' : 'partner';
-    const { data: leads, error: leadsError } = await svc
+    const { data: allLeads, error: leadsError } = await svc
       .from('leads')
-      .select('id, first_name, last_name, current_title, current_company, industry, company_size, known, recent_posts')
+      .select('id, first_name, last_name, current_title, current_company, industry, company_size, known, recent_posts, enrich_status')
       .eq('account_id', accountId)
       .in('id', leadIds.slice(0, BATCH_CAP));
     if (leadsError) throw new Error(leadsError.message);
-    if (!leads || leads.length === 0) throw new HttpError(400, 'No valid leads.');
+    if (!allLeads || allLeads.length === 0) throw new HttpError(400, 'No valid leads.');
+
+    // A known contact can be messaged without enrichment (the message doesn't use
+    // their profile). A NEW lead must be fully enriched first (the message grounds
+    // on their role/company) — skip the ones that aren't.
+    const leads = allLeads.filter((l) => l.known || l.enrich_status === 'full');
+    const skipped = allLeads.length - leads.length;
+    if (leads.length === 0) {
+      throw new HttpError(400, 'These leads must be enriched before generating (only known contacts can skip enrichment).');
+    }
 
     const results: Array<{ leadId: string; body: string }> = [];
     for (const lead of leads) {
@@ -98,8 +107,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    log.info('leads', 'generated', { count: results.filter((r) => r.body).length });
-    return json({ ok: true, drafts: results });
+    log.info('leads', 'generated', { count: results.filter((r) => r.body).length, skipped });
+    return json({ ok: true, drafts: results, skipped });
   } catch (err) {
     return errorResponse(err);
   }

@@ -18,6 +18,7 @@ interface Lead {
   email: string | null;
   known: boolean;
   enriched_at: string | null;
+  enrich_status: string | null;
   messageStatus: string | null;
   messageBody: string | null;
 }
@@ -35,6 +36,7 @@ function leadName(l: { first_name: string | null; last_name: string | null }) {
   return [l.first_name, l.last_name].filter(Boolean).join(' ') || 'Lead';
 }
 
+const LEADS_PAGE_SIZE = 25;
 const AVATAR_COLORS = ['#2bb3e0', '#4361ee', '#16a34a', '#b45309', '#9333ea', '#db2777', '#0891b2', '#ca8a04'];
 function avatarColor(s: string) {
   let h = 0;
@@ -50,7 +52,12 @@ export default function LeadsPage() {
   const confirm = useConfirm();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(true);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  // Progressive enrichment (runs on open until all leads are enriched).
+  const [enriching, setEnriching] = useState(false);
+  const [enrichDone, setEnrichDone] = useState(0);
+  const [enrichTotal, setEnrichTotal] = useState(0);
+  const enrichStarted = useRef(false);
 
   // Filters (run on enriched columns)
   const [fIndustry, setFIndustry] = useState('');
@@ -59,10 +66,12 @@ export default function LeadsPage() {
   const [fName, setFName] = useState('');
   // Message-status filter (client-side, instant): all | none | draft | sent.
   const [fStatus, setFStatus] = useState<'all' | 'none' | 'draft' | 'sent'>('all');
+  const [page, setPage] = useState(1);
 
   // Selection + send flow
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
   const [busyGen, setBusyGen] = useState(false);
+  const [skippedCount, setSkippedCount] = useState(0);
   const [langModal, setLangModal] = useState<{ ids: string[] } | null>(null);
   const [genLang, setGenLang] = useState('auto');
   const [preview, setPreview] = useState<Lead[] | null>(null);
@@ -82,6 +91,7 @@ export default function LeadsPage() {
   const loadLeads = useCallback(async () => {
     const { fIndustry, fCompany, fTitle, fName } = filtersRef.current;
     const p = new URLSearchParams();
+    p.set('enriched', 'true'); // the Leads page only shows enriched leads
     if (fIndustry) p.set('industry', fIndustry);
     if (fCompany) p.set('company', fCompany);
     if (fTitle) p.set('title', fTitle);
@@ -96,7 +106,7 @@ export default function LeadsPage() {
       setLeads(data.leads ?? []);
     } catch (e) {
       if ((e as { name?: string })?.name === 'AbortError') return; // superseded — keep loading for the newer request
-      setMsg('Could not load leads: ' + (e instanceof Error ? e.message : 'error'));
+      setMsg({ text: 'Could not load leads: ' + (e instanceof Error ? e.message : 'error'), error: true });
     } finally {
       if (loadAbortRef.current === ac) setLoadingLeads(false);
     }
@@ -105,6 +115,47 @@ export default function LeadsPage() {
   useEffect(() => {
     loadLeads();
   }, [loadLeads]);
+
+  // Enrich not-yet-enriched leads progressively: call the endpoint in a loop,
+  // reveal newly-enriched leads after each batch, and drive the progress bar.
+  const runEnrich = useCallback(async () => {
+    let baseline: number | null = null;
+    let prevRemaining = Infinity;
+    try {
+      for (;;) {
+        const data = await fetchJson<{ enriched: number; remaining: number; connected?: boolean; authError?: boolean }>(
+          '/api/leads/enrich',
+          { method: 'POST' }
+        );
+        if (!data.connected) return; // not connected → nothing to enrich here
+        if (baseline === null) {
+          baseline = data.remaining + data.enriched;
+          if (baseline === 0) return; // everything already enriched
+          setEnrichTotal(baseline);
+          setEnriching(true);
+        }
+        setEnrichDone(Math.max(0, baseline - data.remaining));
+        await loadLeads(); // reveal the ones just enriched
+        if (data.authError || data.remaining === 0) break;
+        // No progress this round (nothing got enriched) → stop; never loop forever.
+        if (data.remaining >= prevRemaining) break;
+        prevRemaining = data.remaining;
+        // Pace between batches — retrieving profiles too fast makes LinkedIn
+        // throttle the experience section (leads come back without company).
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    } catch {
+      /* stop silently — revisiting the page resumes enrichment */
+    } finally {
+      setEnriching(false);
+    }
+  }, [loadLeads]);
+
+  useEffect(() => {
+    if (enrichStarted.current) return;
+    enrichStarted.current = true;
+    runEnrich();
+  }, [runEnrich]);
 
   function toggleLead(id: string) {
     setSelLeads((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -117,10 +168,27 @@ export default function LeadsPage() {
     return leads.filter((l) => l.messageStatus === 'draft'); // generated, not sent
   }, [leads, fStatus]);
 
+  // "Select all" spans ALL pages (the whole filtered set), not just the page.
   const allSelected = visibleLeads.length > 0 && visibleLeads.every((l) => selLeads.has(l.id));
   function toggleSelectAll() {
     setSelLeads(allSelected ? new Set() : new Set(visibleLeads.map((l) => l.id)));
   }
+
+  // Client-side pagination over the filtered set.
+  const pageCount = Math.max(1, Math.ceil(visibleLeads.length / LEADS_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageLeads = visibleLeads.slice((safePage - 1) * LEADS_PAGE_SIZE, safePage * LEADS_PAGE_SIZE);
+  const pageAllSelected = pageLeads.length > 0 && pageLeads.every((l) => selLeads.has(l.id));
+  function togglePage() {
+    setSelLeads((prev) => {
+      const n = new Set(prev);
+      if (pageAllSelected) pageLeads.forEach((l) => n.delete(l.id));
+      else pageLeads.forEach((l) => n.add(l.id));
+      return n;
+    });
+  }
+  // Back to page 1 whenever the status filter changes.
+  useEffect(() => { setPage(1); }, [fStatus]);
 
   // Open the language picker for a batch of lead ids; generation runs on confirm.
   function openLangModal(ids: string[]) {
@@ -142,18 +210,22 @@ export default function LeadsPage() {
     if (!ids.length) return;
     setBusyGen(true);
     setMsg(null);
+    setSkippedCount(0);
     try {
-      const data = await fetchJson<{ drafts: Array<{ leadId: string; body: string }> }>('/api/leads/generate', {
+      const data = await fetchJson<{ drafts: Array<{ leadId: string; body: string }>; skipped?: number }>('/api/leads/generate', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ leadIds: ids, language }),
       });
       const byId: Record<string, string> = {};
-      data.drafts.forEach((d) => { byId[d.leadId] = d.body; });
+      data.drafts.forEach((d) => { if (d.body) byId[d.leadId] = d.body; });
       setDrafts(byId);
       setSent(new Set());
-      setPreview(ids.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l));
+      const generatedIds = data.drafts.filter((d) => d.body).map((d) => d.leadId);
+      setPreview(generatedIds.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l));
+      setSkippedCount(data.skipped ?? 0);
+      if (data.skipped) setMsg({ text: `${data.skipped} lead(s) skipped — not enriched yet (only known contacts can be generated without enrichment).` });
     } catch (e) {
-      setMsg('Generate failed: ' + (e instanceof Error ? e.message : 'error'));
+      setMsg({ text: 'Generate failed: ' + (e instanceof Error ? e.message : 'error'), error: true });
     } finally {
       setBusyGen(false);
     }
@@ -171,7 +243,7 @@ export default function LeadsPage() {
       setSent((s) => new Set(s).add(id));
       return true;
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Send failed.');
+      setMsg({ text: e instanceof Error ? e.message : 'Send failed.', error: true });
       return false;
     } finally {
       setSending((s) => { const n = new Set(s); n.delete(id); return n; });
@@ -187,6 +259,7 @@ export default function LeadsPage() {
   function closePreview() {
     setPreview(null);
     setSelLeads(new Set());
+    setSkippedCount(0);
     loadLeads();
   }
 
@@ -202,7 +275,7 @@ export default function LeadsPage() {
   async function removeLead(id: string) {
     if (!(await confirm({ title: 'Delete lead', message: 'Delete this lead?', confirmLabel: 'Delete', danger: true }))) return;
     const res = await fetch(`/api/leads/${id}`, { method: 'DELETE' });
-    if (!res.ok) { setMsg('Delete failed.'); return; }
+    if (!res.ok) { setMsg({ text: 'Delete failed.', error: true }); return; }
     // Drop any generated-message UI state for this lead so it can't stay visible.
     setDrafts((d) => { const n = { ...d }; delete n[id]; return n; });
     setSent((s) => { const n = new Set(s); n.delete(id); return n; });
@@ -213,6 +286,27 @@ export default function LeadsPage() {
     });
     loadLeads();
   }
+  async function removeSelected() {
+    const ids = Array.from(selLeads);
+    if (!ids.length) return;
+    if (!(await confirm({ title: 'Delete leads', message: `Delete ${ids.length} lead${ids.length === 1 ? '' : 's'}?`, confirmLabel: 'Delete', danger: true }))) return;
+    try {
+      await fetchJson('/api/leads/delete', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ leadIds: ids }),
+      });
+    } catch (e) {
+      setMsg({ text: 'Delete failed: ' + (e instanceof Error ? e.message : 'error'), error: true });
+      return;
+    }
+    // Drop any generated-message UI state for the removed leads.
+    setDrafts((d) => { const n = { ...d }; ids.forEach((id) => delete n[id]); return n; });
+    setSent((s) => { const n = new Set(s); ids.forEach((id) => n.delete(id)); return n; });
+    setPreview((p) => { if (!p) return p; const next = p.filter((l) => !ids.includes(l.id)); return next.length ? next : null; });
+    setSelLeads(new Set());
+    loadLeads();
+  }
+
   async function setKnown(id: string, known: boolean) {
     setLeads((p) => p.map((l) => (l.id === id ? { ...l, known } : l))); // optimistic
     setProfileModal((m) => (m && m.lead.id === id ? { ...m, lead: { ...m.lead, known } } : m));
@@ -225,13 +319,13 @@ export default function LeadsPage() {
       // Revert the optimistic toggle if the save failed.
       setLeads((p) => p.map((l) => (l.id === id ? { ...l, known: !known } : l)));
       setProfileModal((m) => (m && m.lead.id === id ? { ...m, lead: { ...m.lead, known: !known } } : m));
-      setMsg('Could not update — please try again.');
+      setMsg({ text: 'Could not update — please try again.', error: true });
     }
   }
 
   const statusBadge = (s: string | null) =>
     s === 'sent' ? <span className="badge good" style={{ fontSize: 10 }}>sent</span>
-      : s === 'draft' ? <span className="badge warn" style={{ fontSize: 10 }}>draft</span>
+      : s === 'draft' ? <span className="badge info" style={{ fontSize: 10 }}>draft</span>
       : null;
 
   return (
@@ -245,7 +339,19 @@ export default function LeadsPage() {
         <Link className="btn secondary" href="/connections">Find more leads</Link>
       </div>
 
-      {msg && <div className="notice">{msg}</div>}
+      {msg && <div className={`notice ${msg.error ? 'bad' : ''}`}>{msg.text}</div>}
+
+      {enriching && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
+            <span className="muted">Enriching leads… {enrichDone}/{enrichTotal}</span>
+            <span className="muted">{enrichTotal > 0 ? Math.round((enrichDone / enrichTotal) * 100) : 0}%</span>
+          </div>
+          <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{ width: `${enrichTotal > 0 ? Math.min(100, (enrichDone / enrichTotal) * 100) : 0}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-2))', transition: 'width .3s' }} />
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="card">
@@ -278,9 +384,12 @@ export default function LeadsPage() {
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2 style={{ margin: 0 }}>{visibleLeads.length} lead{visibleLeads.length === 1 ? '' : 's'}{fStatus !== 'all' && leads.length !== visibleLeads.length ? <span className="muted" style={{ fontWeight: 400 }}> / {leads.length}</span> : null}</h2>
           {selLeads.size > 0 && (
-            <button className="btn" onClick={() => openLangModal(Array.from(selLeads))} disabled={busyGen}>
-              {busyGen ? 'Generating…' : `Generate ${selLeads.size} message${selLeads.size === 1 ? '' : 's'}`}
-            </button>
+            <span className="row" style={{ gap: 8 }}>
+              <button className="btn ghost" onClick={removeSelected} disabled={busyGen}>Delete {selLeads.size}</button>
+              <button className="btn" onClick={() => openLangModal(Array.from(selLeads))} disabled={busyGen}>
+                {busyGen ? 'Generating…' : `Generate ${selLeads.size} message${selLeads.size === 1 ? '' : 's'}`}
+              </button>
+            </span>
           )}
         </div>
         <div className="table-wrap">
@@ -294,7 +403,7 @@ export default function LeadsPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleLeads.map((l) => {
+              {pageLeads.map((l) => {
                 const name = leadName(l);
                 return (
                   <tr key={l.id} onClick={() => openProfile(l)} style={{ cursor: 'pointer' }}>
@@ -305,7 +414,7 @@ export default function LeadsPage() {
                       <div className="row" style={{ gap: 10, minWidth: 0 }}>
                         <span className="avatar-c" style={{ width: 34, height: 34, fontSize: 12, background: avatarColor(name) }}>{initials(name)}</span>
                         <span style={{ minWidth: 0 }}>
-                          <span className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{name}</span>{statusBadge(l.messageStatus)}</span>
+                          <span className="row" style={{ gap: 6 }}><span style={{ fontWeight: 600 }}>{name}</span>{statusBadge(l.messageStatus)}{l.enrich_status === 'partial' && <span className="badge progress" style={{ fontSize: 10 }} title="Profile incomplete (experience section throttled by LinkedIn) — will be re-enriched later">enriching…</span>}</span>
                           <span className="muted" style={{ display: 'block', fontSize: 12.5 }}>{l.current_title ?? '—'}</span>
                         </span>
                       </div>
@@ -346,6 +455,20 @@ export default function LeadsPage() {
             </tbody>
           </table>
         </div>
+        {visibleLeads.length > 0 && (
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
+            <button className="btn ghost sm" onClick={togglePage}>
+              {pageAllSelected ? 'Deselect this page' : 'Select this page'}
+            </button>
+            {pageCount > 1 && (
+              <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <button className="btn ghost sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1}>Prev</button>
+                <span className="muted" style={{ fontSize: 13 }}>Page {safePage} / {pageCount}</span>
+                <button className="btn ghost sm" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage >= pageCount}>Next</button>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Generate → preview → send panel */}
@@ -357,6 +480,11 @@ export default function LeadsPage() {
               <button className="btn ghost sm" onClick={closePreview}>Close</button>
             </div>
             <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>Edit each message if you like, then send. Sends respect your daily limit.</p>
+            {skippedCount > 0 && (
+              <div className="notice warn" style={{ fontSize: 12.5 }}>
+                {skippedCount} selected lead{skippedCount === 1 ? '' : 's'} skipped — not enriched yet. Only known contacts, or fully enriched leads, can be generated.
+              </div>
+            )}
 
             <div style={{ maxHeight: '60vh', overflowY: 'auto', marginTop: 8 }}>
               {preview.map((l) => {
@@ -529,7 +657,7 @@ function LeadDrawer({
               return (
                 <div key={m.id} style={{ marginBottom: 10, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-ctl)' }}>
                   <div className="row" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                    <span className={`badge ${sent ? 'good' : 'warn'}`}>{sent ? 'Sent' : 'Not sent yet'}</span>
+                    <span className={`badge ${sent ? 'good' : 'info'}`}>{sent ? 'Sent' : 'Not sent yet'}</span>
                     {ts && <span className="muted" style={{ fontSize: 12 }}>{new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, lineHeight: 1.5 }}>{m.body}</div>
@@ -614,15 +742,27 @@ function LeadDrawer({
 
         <div className="drawer-foot row" style={{ gap: 8 }}>
           <button className="btn ghost" onClick={onDelete}>Delete</button>
-          <button
-            className="btn"
-            style={{ flex: 1 }}
-            onClick={onGenerate}
-            disabled={messages.length > 0}
-            title={messages.length > 0 ? 'A message was already generated for this lead — edit it in Messages' : undefined}
-          >
-            {messages.length > 0 ? 'Message already generated' : 'Generate message →'}
-          </button>
+          {(() => {
+            const alreadyGenerated = messages.length > 0;
+            // A NEW lead must be fully enriched to generate; a known contact can skip enrichment.
+            const needsEnrichment = !lead.known && lead.enrich_status !== 'full';
+            const disabled = alreadyGenerated || needsEnrichment;
+            const label = alreadyGenerated
+              ? 'Message already generated'
+              : needsEnrichment
+                ? 'Awaiting enrichment'
+                : 'Generate message →';
+            const title = alreadyGenerated
+              ? 'A message was already generated for this lead — edit it in Messages'
+              : needsEnrichment
+                ? 'This lead must be enriched first (only known contacts can be generated without enrichment).'
+                : undefined;
+            return (
+              <button className="btn" style={{ flex: 1 }} onClick={onGenerate} disabled={disabled} title={title}>
+                {label}
+              </button>
+            );
+          })()}
         </div>
       </aside>
     </>

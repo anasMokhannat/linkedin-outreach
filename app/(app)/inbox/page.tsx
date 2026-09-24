@@ -37,7 +37,7 @@ export default function InboxPage() {
         <div className="chat-empty">{error}</div>
       ) : leads.length === 0 ? (
         <div className="chat-empty">
-          No conversations yet — add leads to a campaign to start messaging them.
+          No conversations yet — message leads from the Leads page to start a conversation.
         </div>
       ) : (
         <CampaignChat leads={leads} initialLeadId={initialLeadId} />

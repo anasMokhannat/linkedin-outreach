@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     let query = svc
       .from('leads')
       .select(
-        'id, account_id, profile_url, provider_member_id, first_name, last_name, headline, current_company, current_title, location, school, industry, email, known, company_size, enriched_at, provider_chat_id, created_at'
+        'id, account_id, profile_url, provider_member_id, first_name, last_name, headline, current_company, current_title, location, school, industry, email, known, company_size, enriched_at, enrich_status, provider_chat_id, created_at'
       )
       .eq('account_id', accountId)
       .order('created_at', { ascending: false })

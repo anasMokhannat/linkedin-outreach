@@ -138,6 +138,8 @@ tbody tr:hover { background: var(--surface-2); }
 .badge.good { color: var(--good); background: var(--good-soft); }
 .badge.warn { color: var(--warn); background: var(--warn-soft); }
 .badge.bad { color: var(--bad); background: var(--bad-soft); }
+.badge.info { color: var(--accent-hover); background: var(--accent-soft); }
+.badge.progress { color: #6d28d9; background: #f1ebfd; }
 .badge.plain::before { display: none; }
 
 /* ---- Helpers ---- */

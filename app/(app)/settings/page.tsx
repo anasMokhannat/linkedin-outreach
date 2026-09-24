@@ -37,10 +37,10 @@ export default function SettingsPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ writerRole: role }),
       });
-      setMsg('Type de compte mis à jour.');
+      setMsg('Account type updated.');
     } catch {
       setWriterRole(prev); // revert on failure
-      setMsg('Échec de la mise à jour du type de compte.');
+      setMsg('Could not update the account type.');
     } finally {
       setSavingRole(false);
     }
@@ -88,9 +88,9 @@ export default function SettingsPage() {
 
       {/* Sender nature — drives how generated messages refer to FLUGIA */}
       <div className="card" style={{ maxWidth: 720 }}>
-        <h2 style={{ marginTop: 0 }}>Type de compte</h2>
+        <h2 style={{ marginTop: 0 }}>Account type</h2>
         <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-          Détermine la façon dont vos messages parlent de FLUGIA (partenaire qui recommande, ou membre de l&apos;équipe).
+          Controls how your messages refer to FLUGIA (a partner who recommends it, or a team member).
         </p>
         <div style={{ display: 'grid', gap: 8 }}>
           <label className="row" style={{ gap: 8, cursor: 'pointer', opacity: writerRole === null ? 0.5 : 1 }}>
@@ -102,7 +102,7 @@ export default function SettingsPage() {
               disabled={writerRole === null || savingRole}
               onChange={() => saveRole('partner')}
             />
-            Partenaire — je revends / recommande FLUGIA
+            Partner — I resell / recommend FLUGIA
           </label>
           <label className="row" style={{ gap: 8, cursor: 'pointer', opacity: writerRole === null ? 0.5 : 1 }}>
             <input
@@ -113,7 +113,7 @@ export default function SettingsPage() {
               disabled={writerRole === null || savingRole}
               onChange={() => saveRole('associate')}
             />
-            Associé — je fais partie de FLUGIA
+            Associate — I&apos;m part of FLUGIA
           </label>
         </div>
       </div>

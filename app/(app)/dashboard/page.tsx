@@ -24,7 +24,7 @@ export default async function OverviewPage() {
           <h2 style={{ marginTop: 0 }}>Connect your LinkedIn</h2>
           <p className="muted" style={{ fontSize: 14 }}>
             You haven&apos;t connected a LinkedIn account yet. Connect one to sync your connections,
-            build campaigns, and send messages.
+            generate personalized messages, and send them.
           </p>
           <Link className="btn" href="/connect">Connect LinkedIn</Link>
         </div>

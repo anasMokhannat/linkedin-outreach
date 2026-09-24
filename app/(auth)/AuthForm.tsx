@@ -64,15 +64,15 @@ export default function AuthForm({ mode }: { mode: 'login' | 'register' }) {
 
         {isRegister && (
           <>
-            <label style={{ marginTop: 14 }}>Vous êtes…</label>
+            <label style={{ marginTop: 14 }}>You are…</label>
             <div style={{ display: 'grid', gap: 8, marginTop: 2 }}>
               <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
                 <input type="radio" name="writerRole" style={{ width: 'auto' }} checked={writerRole === 'partner'} onChange={() => setWriterRole('partner')} />
-                Partenaire — je revends / recommande FLUGIA
+                Partner — I resell / recommend FLUGIA
               </label>
               <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
                 <input type="radio" name="writerRole" style={{ width: 'auto' }} checked={writerRole === 'associate'} onChange={() => setWriterRole('associate')} />
-                Associé — je fais partie de FLUGIA
+                Associate — I&apos;m part of FLUGIA
               </label>
             </div>
           </>

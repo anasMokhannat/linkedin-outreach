@@ -15,6 +15,7 @@ interface Staged {
 }
 
 const STALE_MS = 24 * 60 * 60 * 1000;
+const CONNS_PAGE_SIZE = 50;
 
 export default function ConnectionsPage() {
   const [msg, setMsg] = useState<string | null>(null);
@@ -24,6 +25,7 @@ export default function ConnectionsPage() {
   const [connected, setConnected] = useState<boolean | null>(null); // null = still checking
   const [syncStatus, setSyncStatus] = useState<string>('none');
   const [selConns, setSelConns] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
   const autoSynced = useRef(false);
 
   // Single request: the connections endpoint already returns the account status
@@ -90,20 +92,36 @@ export default function ConnectionsPage() {
     setSelConns((p) => { const n = new Set(p); n.has(url) ? n.delete(url) : n.add(url); return n; });
   }
   function toggleSelectAll() {
+    // Spans ALL pages (every eligible connection in the filtered set).
     setSelConns(allSelected ? new Set() : new Set(eligibleUrls));
+  }
+
+  // Client-side pagination + per-page selection (eligible connections only).
+  const pageCount = Math.max(1, Math.ceil(conns.length / CONNS_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageConns = conns.slice((safePage - 1) * CONNS_PAGE_SIZE, safePage * CONNS_PAGE_SIZE);
+  const pageEligible = pageConns.filter((c) => !c.alreadyLead).map((c) => c.profileUrl);
+  const pageAllSelected = pageEligible.length > 0 && pageEligible.every((u) => selConns.has(u));
+  function togglePage() {
+    setSelConns((prev) => {
+      const n = new Set(prev);
+      if (pageAllSelected) pageEligible.forEach((u) => n.delete(u));
+      else pageEligible.forEach((u) => n.add(u));
+      return n;
+    });
   }
 
   async function addSelectedConns() {
     const chosen = conns.filter((c) => selConns.has(c.profileUrl) && !c.alreadyLead);
     if (!chosen.length) return setMsg('Nothing new selected.');
     setBusy((p) => ({ ...p, add: true }));
-    setMsg(`Adding ${chosen.length} lead(s) and enriching…`);
+    setMsg(`Adding ${chosen.length} lead(s)…`);
     try {
-      const data = await fetchJson<{ inserted: number; enriched?: number }>('/api/leads/select', {
+      const data = await fetchJson<{ inserted: number }>('/api/leads/select', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ connections: chosen }),
       });
-      setMsg(`Added ${data.inserted} lead(s)${typeof data.enriched === 'number' ? ` · enriched ${data.enriched}` : ''}. View them on the Leads page.`);
+      setMsg(`Added ${data.inserted} lead(s). Open the Leads page — enrichment runs there automatically.`);
       setSelConns(new Set());
       loadConnections();
     } catch (e) {
@@ -157,11 +175,15 @@ export default function ConnectionsPage() {
         <p className="muted" style={{ fontSize: 13 }}>
           Filtered automatically to your target profile — add the ones you want to reach, then generate & send from Leads.
         </p>
+        <div className="notice warn" style={{ fontSize: 12.5 }}>
+          Tip: don&apos;t enrich more than <strong>~100 leads/day</strong> per LinkedIn account. Beyond that, LinkedIn
+          throttles profile data (missing company/title) and may restrict the account.
+        </div>
         <div className="table-wrap" style={{ maxHeight: 520, overflowY: 'auto', marginTop: 6 }}>
           <table>
             <thead><tr><th></th><th>Name</th><th>Headline</th></tr></thead>
             <tbody>
-              {conns.slice(0, 500).map((c) => (
+              {pageConns.map((c) => (
                 <tr key={c.profileUrl}>
                   <td style={{ width: 36 }}>
                     {c.alreadyLead ? <span className="badge good">✓</span> :
@@ -177,7 +199,20 @@ export default function ConnectionsPage() {
             </tbody>
           </table>
         </div>
-        {conns.length > 500 && <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Showing first 500 of {conns.length}.</p>}
+        {conns.length > 0 && (
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
+            <button className="btn ghost sm" onClick={togglePage} disabled={pageEligible.length === 0}>
+              {pageAllSelected ? 'Deselect this page' : 'Select this page'}
+            </button>
+            {pageCount > 1 && (
+              <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <button className="btn ghost sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1}>Prev</button>
+                <span className="muted" style={{ fontSize: 13 }}>Page {safePage} / {pageCount}</span>
+                <button className="btn ghost sm" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage >= pageCount}>Next</button>
+              </span>
+            )}
+          </div>
+        )}
       </div>
       )}
     </div>
