@@ -72,6 +72,8 @@ export default function LeadsPage() {
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
   const [busyGen, setBusyGen] = useState(false);
   const [skippedCount, setSkippedCount] = useState(0);
+  const [genTotal, setGenTotal] = useState(0);
+  const [genDone, setGenDone] = useState(0);
   const [langModal, setLangModal] = useState<{ ids: string[] } | null>(null);
   const [genLang, setGenLang] = useState('auto');
   const [preview, setPreview] = useState<Lead[] | null>(null);
@@ -208,27 +210,42 @@ export default function LeadsPage() {
   async function generate(idsArg?: string[], language = 'auto') {
     const ids = idsArg ?? Array.from(selLeads);
     if (!ids.length) return;
-    setBusyGen(true);
+    // Split eligibility client-side (known contacts skip enrichment; new leads must be full).
+    const selectedLeads = ids.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l);
+    const eligible = selectedLeads.filter((l) => l.known || l.enrich_status === 'full');
+    const skipped = selectedLeads.length - eligible.length;
     setMsg(null);
-    setSkippedCount(0);
-    try {
-      const data = await fetchJson<{ drafts: Array<{ leadId: string; body: string }>; skipped?: number }>('/api/leads/generate', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ leadIds: ids, language }),
-      });
-      const byId: Record<string, string> = {};
-      data.drafts.forEach((d) => { if (d.body) byId[d.leadId] = d.body; });
-      setDrafts(byId);
-      setSent(new Set());
-      const generatedIds = data.drafts.filter((d) => d.body).map((d) => d.leadId);
-      setPreview(generatedIds.map((id) => leads.find((l) => l.id === id)).filter((l): l is Lead => !!l));
-      setSkippedCount(data.skipped ?? 0);
-      if (data.skipped) setMsg({ text: `${data.skipped} lead(s) skipped — not enriched yet (only known contacts can be generated without enrichment).` });
-    } catch (e) {
-      setMsg({ text: 'Generate failed: ' + (e instanceof Error ? e.message : 'error'), error: true });
-    } finally {
-      setBusyGen(false);
+    setDrafts({});
+    setSent(new Set());
+    setSkippedCount(skipped);
+    if (eligible.length === 0) {
+      setMsg({ text: `All ${skipped} selected lead(s) skipped — not enriched yet (only known contacts can be generated without enrichment).`, error: true });
+      return;
     }
+    // Open the popup immediately; fill it (and the progress bar) as each message arrives.
+    setPreview([]);
+    setGenTotal(eligible.length);
+    setGenDone(0);
+    setBusyGen(true);
+    for (const lead of eligible) {
+      try {
+        const data = await fetchJson<{ drafts: Array<{ leadId: string; body: string }> }>('/api/leads/generate', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ leadIds: [lead.id], language }),
+        });
+        const body = data.drafts.find((d) => d.leadId === lead.id)?.body ?? '';
+        if (body) {
+          setDrafts((prev) => ({ ...prev, [lead.id]: body }));
+          // Append to the popup only if it's still open (don't reopen a closed one).
+          setPreview((prev) => (prev ? [...prev, lead] : prev));
+        }
+      } catch {
+        /* skip this lead on error, keep going */
+      }
+      setGenDone((d) => d + 1);
+    }
+    setBusyGen(false);
+    loadLeads(); // refresh statuses once the whole batch is done
   }
 
   async function sendOne(id: string): Promise<boolean> {
@@ -257,6 +274,9 @@ export default function LeadsPage() {
     }
   }
   function closePreview() {
+    // Just hide the popup — generation keeps running in the background (drafts are
+    // saved as they go and show up in Messages). Progress state is left intact so
+    // the background indicator can keep showing until it finishes.
     setPreview(null);
     setSelLeads(new Set());
     setSkippedCount(0);
@@ -340,6 +360,15 @@ export default function LeadsPage() {
       </div>
 
       {msg && <div className={`notice ${msg.error ? 'bad' : ''}`}>{msg.text}</div>}
+
+      {busyGen && !preview && (
+        <div className="notice" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 13, flexShrink: 0 }}>Generating messages in the background… {genDone}/{genTotal}</span>
+          <span style={{ flex: 1, height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+            <span style={{ display: 'block', width: `${genTotal > 0 ? Math.min(100, (genDone / genTotal) * 100) : 0}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-2))', transition: 'width .3s' }} />
+          </span>
+        </div>
+      )}
 
       {enriching && (
         <div className="card" style={{ marginBottom: 14 }}>
@@ -479,6 +508,17 @@ export default function LeadsPage() {
               <h2 style={{ margin: 0 }}>Review &amp; send ({preview.length})</h2>
               <button className="btn ghost sm" onClick={closePreview}>Close</button>
             </div>
+            {busyGen && (
+              <div style={{ marginTop: 10 }}>
+                <div className="row" style={{ justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span className="muted">Generating messages… {genDone}/{genTotal}</span>
+                  <span className="muted">{genTotal > 0 ? Math.round((genDone / genTotal) * 100) : 0}%</span>
+                </div>
+                <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ width: `${genTotal > 0 ? Math.min(100, (genDone / genTotal) * 100) : 0}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-2))', transition: 'width .3s' }} />
+                </div>
+              </div>
+            )}
             <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>Edit each message if you like, then send. Sends respect your daily limit.</p>
             {skippedCount > 0 && (
               <div className="notice warn" style={{ fontSize: 12.5 }}>
