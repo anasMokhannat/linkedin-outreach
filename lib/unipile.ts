@@ -31,21 +31,66 @@ function jsonHeaders(): Record<string, string> {
  * fetch wrapper that logs method, path (query stripped), status and duration to
  * the server console. The X-API-KEY lives in headers and is never logged.
  */
+// --- Rate-limit / transient-error handling -----------------------------------
+// LinkedIn (relayed by Unipile) returns 429 or 500 when its per-account limits
+// are hit; there's no documented Retry-After, so we back off exponentially with
+// jitter. 429/503 mean "rejected, try later" → safe to retry for any method;
+// 500/502/504 are retried only for idempotent GETs (a POST may have partially
+// applied). See Unipile "Provider limits and restrictions".
+const UNIPILE_MAX_RETRIES = 3;
+const RETRYABLE_ANY_METHOD = new Set([429, 503]);
+const RETRYABLE_GET_ONLY = new Set([429, 500, 502, 503, 504]);
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function backoffMs(attempt: number): number {
+  const base = Math.min(1000 * 2 ** attempt, 30_000); // 1s, 2s, 4s, 8s … capped at 30s
+  return base + Math.floor(Math.random() * 500); // + 0–500ms jitter
+}
+
+function retryAfterMs(res: Response): number | null {
+  const h = res.headers.get('retry-after');
+  if (!h) return null;
+  const secs = Number(h);
+  if (Number.isFinite(secs)) return Math.min(Math.max(0, secs) * 1000, 60_000);
+  const when = Date.parse(h);
+  return Number.isNaN(when) ? null : Math.max(0, Math.min(when - Date.now(), 60_000));
+}
+
 async function uFetch(url: string, init?: RequestInit): Promise<Response> {
-  const method = init?.method ?? 'GET';
+  const method = (init?.method ?? 'GET').toUpperCase();
   const path = url.replace(base(), '').split('?')[0];
-  const started = Date.now();
-  try {
-    const res = await globalThis.fetch(url, init);
+  const retryable = method === 'GET' ? RETRYABLE_GET_ONLY : RETRYABLE_ANY_METHOD;
+
+  for (let attempt = 0; ; attempt++) {
+    const started = Date.now();
+    let res: Response;
+    try {
+      res = await globalThis.fetch(url, init);
+    } catch (e) {
+      // Network-level failure → retry a couple of times, then give up.
+      if (attempt < UNIPILE_MAX_RETRIES) {
+        log.warn('unipile', `${method} ${path} threw — retry ${attempt + 1}`, { error: e instanceof Error ? e.message : String(e) });
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      log.error('unipile', `${method} ${path} threw (${Date.now() - started}ms)`, { error: e instanceof Error ? e.message : String(e) });
+      throw e;
+    }
+
     const line = `${method} ${path} -> ${res.status} (${Date.now() - started}ms)`;
-    if (res.ok) log.info('unipile', line);
-    else log.warn('unipile', line);
+    if (res.ok) {
+      log.info('unipile', line);
+      return res;
+    }
+    if (retryable.has(res.status) && attempt < UNIPILE_MAX_RETRIES) {
+      const wait = retryAfterMs(res) ?? backoffMs(attempt);
+      log.warn('unipile', `${line} — rate-limited, retry ${attempt + 1} in ${wait}ms`);
+      await sleep(wait);
+      continue;
+    }
+    log.warn('unipile', line);
     return res;
-  } catch (e) {
-    log.error('unipile', `${method} ${path} threw (${Date.now() - started}ms)`, {
-      error: e instanceof Error ? e.message : String(e),
-    });
-    throw e;
   }
 }
 
@@ -305,6 +350,13 @@ export interface UnipileProfile {
   education: UnipileEducation[];
   skills: string[];
   connectionsCount?: number | null;
+  /** True when LinkedIn withheld ("throttled") the experience section on this
+   * fetch — the profile came back without work history, so it should be
+   * re-enriched later (at a slower pace) to get the company/title. */
+  experienceThrottled?: boolean;
+  /** The exact list of sections LinkedIn throttled on this fetch (may include
+   * experience, education, skills, …). Empty when nothing was throttled. */
+  throttledSections?: string[];
   raw: unknown;
 }
 
@@ -343,7 +395,16 @@ export async function unipileGetProfile(
     return undefined;
   };
 
-  const rawExp = (p.work_experience ?? p.experience ?? p.experiences ?? []) as any[];
+  // Use the first NON-EMPTY experience array (`??` would keep an empty [] and
+  // never fall through to `experience`/`experiences`).
+  const rawExp = ([p.work_experience, p.experience, p.experiences].find(
+    (a) => Array.isArray(a) && a.length > 0
+  ) ?? []) as any[];
+  // LinkedIn throttles heavy sections on bulk retrieval → experience withheld.
+  const throttledSections: string[] = Array.isArray(p.throttled_sections)
+    ? p.throttled_sections.filter((s: unknown): s is string => typeof s === 'string')
+    : [];
+  const experienceThrottled = throttledSections.includes('experience');
   const experiences: UnipileExperience[] = (Array.isArray(rawExp) ? rawExp : []).map((e) => ({
     title: e.position ?? e.title ?? e.role,
     company: e.company ?? e.companyName ?? e.company_name,
@@ -403,6 +464,8 @@ export async function unipileGetProfile(
     education,
     skills,
     connectionsCount: typeof p.connections_count === 'number' ? p.connections_count : null,
+    experienceThrottled,
+    throttledSections,
     raw: p,
   };
 }

@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = !!request.cookies.get(USER_COOKIE)?.value;
 
-  const isProtected = ['/dashboard', '/connections', '/leads', '/campaigns', '/inbox', '/settings', '/connect'].some(
+  const isProtected = ['/dashboard', '/connections', '/leads', '/messages', '/inbox', '/settings', '/connect'].some(
     (p) => pathname === p || pathname.startsWith(p + '/')
   );
 
