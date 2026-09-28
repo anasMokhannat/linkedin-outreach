@@ -25,6 +25,7 @@ export default function ConnectionsPage() {
   const [connected, setConnected] = useState<boolean | null>(null); // null = still checking
   const [syncStatus, setSyncStatus] = useState<string>('none');
   const [selConns, setSelConns] = useState<Set<string>>(new Set());
+  const [knownConns, setKnownConns] = useState<Set<string>>(new Set()); // marked "I already know them"
   const [page, setPage] = useState(1);
   const autoSynced = useRef(false);
 
@@ -91,6 +92,9 @@ export default function ConnectionsPage() {
   function toggleConn(url: string) {
     setSelConns((p) => { const n = new Set(p); n.has(url) ? n.delete(url) : n.add(url); return n; });
   }
+  function toggleKnown(url: string) {
+    setKnownConns((p) => { const n = new Set(p); n.has(url) ? n.delete(url) : n.add(url); return n; });
+  }
   function toggleSelectAll() {
     // Spans ALL pages (every eligible connection in the filtered set).
     setSelConns(allSelected ? new Set() : new Set(eligibleUrls));
@@ -116,13 +120,24 @@ export default function ConnectionsPage() {
     if (!chosen.length) return setMsg('Nothing new selected.');
     setBusy((p) => ({ ...p, add: true }));
     setMsg(`Adding ${chosen.length} lead(s)…`);
+    // The select endpoint accepts at most 1000 per request — send in chunks so
+    // large "Select all" batches don't fail.
+    const CHUNK = 1000;
+    const payload = chosen.map((c) => ({ ...c, known: knownConns.has(c.profileUrl) }));
     try {
-      const data = await fetchJson<{ inserted: number }>('/api/leads/select', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ connections: chosen }),
-      });
-      setMsg(`Added ${data.inserted} lead(s). Open the Leads page — enrichment runs there automatically.`);
+      let inserted = 0;
+      for (let i = 0; i < payload.length; i += CHUNK) {
+        const slice = payload.slice(i, i + CHUNK);
+        const data = await fetchJson<{ inserted: number }>('/api/leads/select', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ connections: slice }),
+        });
+        inserted += data.inserted;
+        if (payload.length > CHUNK) setMsg(`Adding leads… ${Math.min(i + CHUNK, payload.length)}/${payload.length}`);
+      }
+      setMsg(`Added ${inserted} lead(s). Open the Leads page — enrichment runs there automatically.`);
       setSelConns(new Set());
+      setKnownConns(new Set());
       loadConnections();
     } catch (e) {
       setMsg('Save failed: ' + (e instanceof Error ? e.message : 'error'));
@@ -176,12 +191,12 @@ export default function ConnectionsPage() {
           Filtered automatically to your target profile — add the ones you want to reach, then generate & send from Leads.
         </p>
         <div className="notice warn" style={{ fontSize: 12.5 }}>
-          Tip: don&apos;t enrich more than <strong>~100 leads/day</strong> per LinkedIn account. Beyond that, LinkedIn
+          Tip: don&apos;t add more than <strong>~100 leads/day</strong> per LinkedIn account. Beyond that, LinkedIn
           throttles profile data (missing company/title) and may restrict the account.
         </div>
         <div className="table-wrap" style={{ maxHeight: 520, overflowY: 'auto', marginTop: 6 }}>
           <table>
-            <thead><tr><th></th><th>Name</th><th>Headline</th></tr></thead>
+            <thead><tr><th></th><th>Name</th><th>Headline</th><th style={{ width: 90 }} title="Toggle on the connections you already know — they won't be enriched and will get a warmer message">Known</th></tr></thead>
             <tbody>
               {pageConns.map((c) => (
                 <tr key={c.profileUrl}>
@@ -191,10 +206,18 @@ export default function ConnectionsPage() {
                   </td>
                   <td><a href={c.profileUrl} target="_blank" rel="noreferrer">{c.fullName}</a></td>
                   <td className="muted">{c.headline ?? '—'}</td>
+                  <td>
+                    {!c.alreadyLead && (
+                      <label className="switch" title="I already know this person — skip enrichment, use a warm message">
+                        <input type="checkbox" checked={knownConns.has(c.profileUrl)} onChange={() => toggleKnown(c.profileUrl)} />
+                        <span className="track" /><span className="thumb" />
+                      </label>
+                    )}
+                  </td>
                 </tr>
               ))}
               {connsLoaded && conns.length === 0 && (
-                <tr><td colSpan={3} className="muted">No connections match your ICP yet — sync runs automatically on open.</td></tr>
+                <tr><td colSpan={4} className="muted">No connections match your ICP yet — sync runs automatically on open.</td></tr>
               )}
             </tbody>
           </table>

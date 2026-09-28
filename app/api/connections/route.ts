@@ -56,7 +56,9 @@ export async function GET(req: NextRequest) {
       status: account.last_sync_status ?? 'succeeded',
       lastSyncAt: account.last_sync_at ?? null,
       total: connections.length,
-      connections: connections.slice(0, 1000).map((c) => ({ ...c, alreadyLead: persisted.has(c.profileUrl) })),
+      // No cap — the Connections page paginates client-side, so it can hold the
+      // full ICP-matched set (was previously sliced to the first 1000).
+      connections: connections.map((c) => ({ ...c, alreadyLead: persisted.has(c.profileUrl) })),
     });
   } catch (err) {
     return errorResponse(err);

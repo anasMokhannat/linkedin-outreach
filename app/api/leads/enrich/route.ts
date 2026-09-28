@@ -30,11 +30,14 @@ export async function POST() {
     const cutoff = new Date(Date.now() - RETRY_AFTER_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const toEnrichFilter = `enrich_status.is.null,and(enrich_status.eq.partial,enrich_attempts.lt.${MAX_ATTEMPTS},enriched_at.lt.${cutoff})`;
 
+    // Known contacts are messaged without their profile → never enrich them (saves
+    // LinkedIn's ~100/day budget for the NEW leads that actually need it).
     const countRemaining = async () => {
       const { count } = await svc
         .from('leads')
         .select('id', { count: 'exact', head: true })
         .eq('account_id', accountId)
+        .eq('known', false)
         .or(toEnrichFilter);
       return count ?? 0;
     };
@@ -53,6 +56,7 @@ export async function POST() {
       .from('leads')
       .select('id, profile_url, provider_member_id, enrich_attempts')
       .eq('account_id', accountId)
+      .eq('known', false)
       .or(toEnrichFilter)
       .order('enriched_at', { ascending: true, nullsFirst: true }) // never-enriched first
       .limit(BATCH);
