@@ -58,6 +58,8 @@ export default function LeadsPage() {
   const [enrichDone, setEnrichDone] = useState(0);
   const [enrichTotal, setEnrichTotal] = useState(0);
   const enrichStarted = useRef(false);
+  // Set to true to stop the progressive-enrichment loop after the current batch.
+  const stopEnrichRef = useRef(false);
 
   // Filters (run on enriched columns)
   const [fIndustry, setFIndustry] = useState('');
@@ -66,6 +68,8 @@ export default function LeadsPage() {
   const [fName, setFName] = useState('');
   // Message-status filter (client-side, instant): all | none | draft | sent.
   const [fStatus, setFStatus] = useState<'all' | 'none' | 'draft' | 'sent'>('all');
+  // Relationship filter (client-side, instant): all | known | unknown.
+  const [fKnown, setFKnown] = useState<'all' | 'known' | 'unknown'>('all');
   const [page, setPage] = useState(1);
 
   // Selection + send flow
@@ -123,8 +127,10 @@ export default function LeadsPage() {
   const runEnrich = useCallback(async () => {
     let baseline: number | null = null;
     let prevRemaining = Infinity;
+    stopEnrichRef.current = false;
     try {
       for (;;) {
+        if (stopEnrichRef.current) break; // user asked to stop
         const data = await fetchJson<{ enriched: number; remaining: number; connected?: boolean; authError?: boolean }>(
           '/api/leads/enrich',
           { method: 'POST' }
@@ -138,6 +144,7 @@ export default function LeadsPage() {
         }
         setEnrichDone(Math.max(0, baseline - data.remaining));
         await loadLeads(); // reveal the ones just enriched
+        if (stopEnrichRef.current) break; // stop before waiting/looping again
         if (data.authError || data.remaining === 0) break;
         // No progress this round (nothing got enriched) → stop; never loop forever.
         if (data.remaining >= prevRemaining) break;
@@ -159,16 +166,25 @@ export default function LeadsPage() {
     runEnrich();
   }, [runEnrich]);
 
+  // Stop the enrichment loop (after the current batch finishes) and hide the bar.
+  function stopEnrich() {
+    stopEnrichRef.current = true;
+    setEnriching(false);
+  }
+
   function toggleLead(id: string) {
     setSelLeads((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
-  // Apply the message-status filter on top of the (server-filtered) leads.
+  // Apply the message-status + relationship filters on top of the (server-filtered) leads.
   const visibleLeads = useMemo(() => {
-    if (fStatus === 'all') return leads;
-    if (fStatus === 'none') return leads.filter((l) => !l.messageStatus);
-    if (fStatus === 'sent') return leads.filter((l) => l.messageStatus === 'sent');
-    return leads.filter((l) => l.messageStatus === 'draft'); // generated, not sent
-  }, [leads, fStatus]);
+    let out = leads;
+    if (fKnown === 'known') out = out.filter((l) => l.known);
+    else if (fKnown === 'unknown') out = out.filter((l) => !l.known);
+    if (fStatus === 'none') out = out.filter((l) => !l.messageStatus);
+    else if (fStatus === 'sent') out = out.filter((l) => l.messageStatus === 'sent');
+    else if (fStatus === 'draft') out = out.filter((l) => l.messageStatus === 'draft'); // generated, not sent
+    return out;
+  }, [leads, fStatus, fKnown]);
 
   // "Select all" spans ALL pages (the whole filtered set), not just the page.
   const allSelected = visibleLeads.length > 0 && visibleLeads.every((l) => selLeads.has(l.id));
@@ -189,8 +205,8 @@ export default function LeadsPage() {
       return n;
     });
   }
-  // Back to page 1 whenever the status filter changes.
-  useEffect(() => { setPage(1); }, [fStatus]);
+  // Back to page 1 whenever a client-side filter changes.
+  useEffect(() => { setPage(1); }, [fStatus, fKnown]);
 
   // Open the language picker for a batch of lead ids; generation runs on confirm.
   function openLangModal(ids: string[]) {
@@ -372,9 +388,12 @@ export default function LeadsPage() {
 
       {enriching && (
         <div className="card" style={{ marginBottom: 14 }}>
-          <div className="row" style={{ justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 13, marginBottom: 6, gap: 10 }}>
             <span className="muted">Enriching leads… {enrichDone}/{enrichTotal}</span>
-            <span className="muted">{enrichTotal > 0 ? Math.round((enrichDone / enrichTotal) * 100) : 0}%</span>
+            <span className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <span className="muted">{enrichTotal > 0 ? Math.round((enrichDone / enrichTotal) * 100) : 0}%</span>
+              <button className="btn ghost sm" onClick={stopEnrich}>Stop</button>
+            </span>
           </div>
           <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
             <div style={{ width: `${enrichTotal > 0 ? Math.min(100, (enrichDone / enrichTotal) * 100) : 0}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-2))', transition: 'width .3s' }} />
@@ -404,6 +423,16 @@ export default function LeadsPage() {
             <option value="draft">Ready to send</option>
             <option value="sent">Reached out</option>
           </select>
+          <select
+            value={fKnown}
+            onChange={(e) => setFKnown(e.target.value as typeof fKnown)}
+            style={{ flex: '1 1 170px' }}
+            aria-label="Relationship"
+          >
+            <option value="all">Everyone</option>
+            <option value="known">People I know</option>
+            <option value="unknown">People I don’t know</option>
+          </select>
           <button className="btn" onClick={loadLeads} style={{ flexShrink: 0 }}>Apply filters</button>
         </div>
       </div>
@@ -428,7 +457,7 @@ export default function LeadsPage() {
                 <th style={{ width: 32 }}>
                   <input type="checkbox" style={{ width: 'auto' }} checked={allSelected} onChange={toggleSelectAll} aria-label="Select all" />
                 </th>
-                <th>Lead</th><th>Company</th><th>Email</th><th>Known</th><th style={{ width: 44 }} aria-label="Actions" />
+                <th>Lead</th><th>Company</th><th>Email</th><th style={{ width: 90 }}>Known</th><th style={{ width: 44 }} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -460,11 +489,10 @@ export default function LeadsPage() {
                         </span>
                       ) : '—'}
                     </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <label className="switch" title={l.known ? 'You know this lead' : "You don't know this lead"}>
-                        <input type="checkbox" checked={l.known} onChange={(e) => setKnown(l.id, e.target.checked)} />
-                        <span className="track" /><span className="thumb" />
-                      </label>
+                    <td>
+                      {l.known
+                        ? <span className="badge good" style={{ fontSize: 10 }} title="You marked this contact as someone you already know — messages use a warmer tone and enrichment is skipped">Known</span>
+                        : <span className="badge plain" style={{ fontSize: 10 }} title="A cold contact — messages use a professional tone">New</span>}
                     </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <button className="btn ghost sm" title="Remove lead" aria-label="Remove lead" onClick={() => removeLead(l.id)}>✕</button>

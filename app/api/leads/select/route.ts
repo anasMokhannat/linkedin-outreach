@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     }
     if (body.connections.length > 1000) throw new HttpError(400, 'Too many at once (max 1000).');
 
-    const rows = (body.connections as StagedConnection[])
+    const rows = (body.connections as Array<StagedConnection & { known?: boolean }>)
       .filter((c) => c && typeof c.profileUrl === 'string' && c.profileUrl)
       .map((c) => ({
         account_id: accountId,
@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
         current_company: c.company ?? null,
         current_title: c.title ?? null,
         provider_member_id: c.providerId ?? null,
+        // "known" is declared on the Connections page before adding.
+        known: !!c.known,
       }));
     if (rows.length === 0) throw new HttpError(400, 'No valid connections in payload.');
 

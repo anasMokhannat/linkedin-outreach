@@ -6,6 +6,11 @@ import { createSupabaseServiceClient } from '@/lib/supabase-server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// Fetch all leads/messages (no artificial cap). PostgREST applies its own default
+// max-rows limit when none is set, so we pass an explicit high ceiling instead —
+// the Leads page paginates client-side, so it can hold the full set.
+const MAX_ROWS = 100000;
+
 /**
  * GET /api/leads?location=&school=&industry=&enriched=
  * Lists the account's leads (account-scoped) with Tier-2 filters + message status.
@@ -26,7 +31,7 @@ export async function GET(req: NextRequest) {
       )
       .eq('account_id', accountId)
       .order('created_at', { ascending: false })
-      .limit(500);
+      .limit(MAX_ROWS);
 
     const industry = url.searchParams.get('industry')?.trim();
     const company = url.searchParams.get('company')?.trim();
@@ -40,7 +45,9 @@ export async function GET(req: NextRequest) {
       const safe = name.replace(/[(),*]/g, ' ').trim();
       if (safe) query = query.or(`first_name.ilike.%${safe}%,last_name.ilike.%${safe}%`);
     }
-    if (url.searchParams.get('enriched') === 'true') query = query.not('enriched_at', 'is', null);
+    // Show a lead once it's enriched OR it's a known contact (known leads are never
+    // enriched but can still be messaged, so they must appear in the list).
+    if (url.searchParams.get('enriched') === 'true') query = query.or('enriched_at.not.is.null,known.is.true');
 
     // Latest message per lead (for the preview / status in the send flow).
     // Independent of the leads query → run both in parallel.
@@ -48,7 +55,8 @@ export async function GET(req: NextRequest) {
       .from('messages')
       .select('lead_id, status, body, created_at')
       .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(MAX_ROWS);
 
     const [{ data: leads, error }, { data: msgs }] = await Promise.all([query, msgsQuery]);
     if (error) throw new Error(error.message);
