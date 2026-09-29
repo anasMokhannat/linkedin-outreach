@@ -63,7 +63,7 @@ export const ANGLES: AxisAngle[] = [
     keyword: 'Expertise interne insuffisante',
     pain: "Un manque de compétences spécifiques en interne pour réaliser certaines actions importantes ou techniques.",
     feeling: "Devoir confier des tâches à des personnes qui ne les maîtrisent pas totalement — incertitude, baisse de qualité.",
-    success: "Une équipe augmentée par des agents IA spécialisés, sans devoir recruter immédiatement.",
+    success: "Une équipe augmentée par des collaborateurs IA spécialisés, sans devoir recruter immédiatement.",
   },
   {
     axis: 'Expertise',
@@ -77,14 +77,14 @@ export const ANGLES: AxisAngle[] = [
     keyword: 'Adoption IA freinée',
     pain: "L'envie d'intégrer l'IA mais sans experts internes pour cadrer, déployer et piloter les bons cas d'usage.",
     feeling: "Du mal à se projeter dans la transformation IA ; le manque de compétences crée doute et hésitation.",
-    success: "Une entreprise augmentée par des agents IA opérationnels, avec des agents personnalisés si besoin.",
+    success: "Une entreprise augmentée par des collaborateurs IA opérationnels, avec des collaborateurs personnalisés si besoin.",
   },
   {
     axis: 'Rentabilité',
     keyword: 'Rentabilité opérationnelle insuffisante',
     pain: "Vouloir produire plus, plus vite, sans augmenter les coûts dans les mêmes proportions.",
     feeling: "Une pression continue sur les résultats ; chaque investissement doit avoir un impact mesurable.",
-    success: "Une entreprise plus efficace, capable d'exécuter davantage à coût maîtrisé grâce à des agents IA supervisés.",
+    success: "Une entreprise plus efficace, capable d'exécuter davantage à coût maîtrisé grâce à des collaborateurs IA supervisés.",
   },
   {
     axis: 'Croissance',
@@ -98,7 +98,7 @@ export const ANGLES: AxisAngle[] = [
     keyword: 'Croissance commerciale insuffisante',
     pain: "Chercher à générer plus de chiffre d'affaires et à renforcer le développement commercial.",
     feeling: "Chaque mois peut devenir stressant quand le chiffre d'affaires ne permet pas d'avancer sereinement.",
-    success: "Des agents IA qui soutiennent les actions commerciales et aident à atteindre les objectifs de revenus.",
+    success: "Des collaborateurs IA qui soutiennent les actions commerciales et aident à atteindre les objectifs de revenus.",
   },
 ];
 
@@ -269,19 +269,21 @@ export function selectStrategy(lead: {
 export const FLUGIA_COMPANY = {
   name: 'FLUGIA',
   description:
-    "FLUGIA est une plateforme d'agents IA pour les entreprises. Elle permet de déployer des agents spécialisés (chatbot, agent d'appel, e-réputation, contenu SEO, campagnes) qui se connectent aux outils déjà utilisés par l'entreprise et prennent en charge des tâches précises, avec un niveau de validation gardé par l'équipe. Elle s'adresse surtout aux TPE et PME qui veulent automatiser des tâches répétitives et utiliser l'IA sans disposer d'expertise technique en interne.",
+    "FLUGIA est une plateforme de collaborateurs IA (AI coworkers) pour les entreprises. Elle permet de déployer des collaborateurs IA spécialisés (chatbot, agent d'appel, e-réputation, contenu SEO, campagnes) qui se connectent aux outils déjà utilisés par l'entreprise et exécutent des tâches opérationnelles précises, avec un niveau de validation gardé par l'équipe. Elle s'adresse surtout aux TPE et PME qui veulent automatiser des tâches répétitives et adopter l'IA sans disposer d'expertise technique en interne.",
   services:
-    "Agents IA spécialisés (chatbot, agent d'appel, e-réputation, contenu SEO, campagnes), connecteurs de départements, dashboards, et développement d'agents sur-mesure.",
-  usps: 'Agents autonomes mais supervisés avec validation configurable ; se connecte aux outils existants ; aucune expertise IA interne requise.',
+    "Collaborateurs IA spécialisés (chatbot, agent d'appel, e-réputation, contenu SEO, campagnes), connecteurs de départements, dashboards, et création de collaborateurs IA sur-mesure.",
+  usps: 'Collaborateurs IA autonomes mais supervisés avec validation configurable ; se connectent aux outils existants ; aucune expertise IA interne requise.',
   painPoints:
     "Tâches chronophages, capacité d'exécution limitée, départements en silos, visibilité opérationnelle faible, données sous-exploitées, manque d'expertise interne, dépendance aux prestataires, adoption IA freinée, rentabilité et croissance insuffisantes.",
 };
 
 // A generic goal for a first touch (there is no per-campaign CTA anymore).
+// The objective is NOT to close a sale in the message — it is to earn a short
+// product demonstration. Sell the demo; the demo sells FLUGIA.
 export const FLUGIA_GOAL =
-  'CTA principal : amener le prospect à visiter la page d’offre FLUGIA (https://flugia.com/pricing/) et à créer un compte, de façon directe. CTA secondaire optionnel : proposer une démo/échange, sans jamais éclipser le lien.';
+  "Objectif : obtenir une démonstration produit qualifiée (10–15 min), pas vendre FLUGIA dans le message ni conclure la vente. On vend la démo — c'est la démo qui vend FLUGIA. Vendre ce que le prospect va découvrir pendant la démo (quels collaborateurs IA activer, quelles tâches ils prendraient en charge, où se situent ses plus grands gains de temps), avec un CTA simple et sans friction vers cette démonstration (CTA principal). CTA secondaire OBLIGATOIRE dans chaque message : inclure le lien de l'offre https://flugia.com/pricing/ (en texte brut, tel quel, toujours) ainsi que le prix à partir de 59 €/mois, en secondaire, sans jamais éclipser l'invitation à la démo.";
 export const FLUGIA_VALUE_PROP =
-  "FLUGIA aide les entreprises à exécuter plus, mieux et plus vite grâce à des agents IA supervisés.";
+  "FLUGIA aide les entreprises à exécuter plus, mieux et plus vite grâce à des collaborateurs IA supervisés.";
 
 // --- ICP: which connections are worth surfacing (in-code, not user-facing) ---
 // Role-based for now (headlines only expose free text pre-enrichment); we refine
