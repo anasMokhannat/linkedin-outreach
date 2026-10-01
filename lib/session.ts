@@ -15,7 +15,11 @@ import { serverEnv } from './env';
 export const SESSION_COOKIE = 'fl_session';
 /** App-user session cookie (email/password identity), independent of LinkedIn. */
 export const USER_COOKIE = 'fl_user';
-const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+// Session lifetime. The expiry is baked into the SIGNED payload (so the server
+// actually rejects old/copied tokens) and mirrored on the cookie's max-age (so
+// the browser also drops it). Reset on every login/connect.
+const SESSION_TTL_MS = 60 * 60 * 24 * 7 * 1000; // 7 days
+const MAX_AGE = Math.floor(SESSION_TTL_MS / 1000); // cookie max-age (seconds)
 
 function b64url(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -53,32 +57,38 @@ export function verifySession(token: string | undefined | null): string | null {
 export interface SessionData {
   userId: string;
   accountId: string | null;
-}
-
-/** Sign a session carrying the user id and (optionally) their LinkedIn account id. */
-export function signUserSession(userId: string, accountId?: string | null): string {
-  return signSession(JSON.stringify({ u: userId, a: accountId ?? null }));
+  /** Expiry (epoch ms) baked into the signed payload. */
+  exp: number;
 }
 
 /**
- * Verify + decode a user session cookie. Handles both the new `{u,a}` payload and
- * legacy cookies that stored only the bare user id (accountId then resolves to
- * null, so callers fall back to a DB lookup once).
+ * Sign a session carrying the user id, (optionally) their LinkedIn account id,
+ * and an expiry timestamp. The expiry is part of the signed payload, so it can't
+ * be tampered with and is enforced server-side on every read.
+ */
+export function signUserSession(userId: string, accountId?: string | null): string {
+  const exp = Date.now() + SESSION_TTL_MS;
+  return signSession(JSON.stringify({ u: userId, a: accountId ?? null, e: exp }));
+}
+
+/**
+ * Verify + decode a user session cookie. Rejects (returns null) when the HMAC is
+ * invalid, the payload is malformed, OR the baked expiry has passed. Legacy
+ * cookies with no expiry (the old `{u,a}` payload or a bare user id) are treated
+ * as expired — users re-log in once, cleanly.
  */
 export function readSession(token: string | undefined | null): SessionData | null {
   const value = verifySession(token);
   if (value == null) return null;
-  if (value.startsWith('{')) {
-    try {
-      const o = JSON.parse(value) as { u?: unknown; a?: unknown };
-      if (typeof o.u !== 'string' || !o.u) return null;
-      return { userId: o.u, accountId: typeof o.a === 'string' && o.a ? o.a : null };
-    } catch {
-      return null;
-    }
+  if (!value.startsWith('{')) return null; // legacy bare-uid token → expired
+  try {
+    const o = JSON.parse(value) as { u?: unknown; a?: unknown; e?: unknown };
+    if (typeof o.u !== 'string' || !o.u) return null;
+    if (typeof o.e !== 'number' || Date.now() > o.e) return null; // missing/expired
+    return { userId: o.u, accountId: typeof o.a === 'string' && o.a ? o.a : null, exp: o.e };
+  } catch {
+    return null;
   }
-  // Legacy token: the signed value is the bare user id.
-  return { userId: value, accountId: null };
 }
 
 /** Non-guessable token placed in the Unipile webhook URL and verified on receipt. */
