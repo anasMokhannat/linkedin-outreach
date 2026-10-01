@@ -34,4 +34,8 @@ export const serverEnv = {
 
   openRouterApiKey: () => required('OPENROUTER_API_KEY'),
   openRouterModel: () => optional('OPENROUTER_MODEL', 'openai/gpt-4o-mini'),
+
+  // Shared secret the auto-send cron must present (Authorization: Bearer …).
+  // Set it in Vercel env + in whatever triggers the cron (cron-job.org, etc.).
+  cronSecret: () => required('CRON_SECRET'),
 };
