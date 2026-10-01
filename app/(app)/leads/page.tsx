@@ -83,7 +83,11 @@ export default function LeadsPage() {
   const [preview, setPreview] = useState<Lead[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sent, setSent] = useState<Set<string>>(new Set());
+  const [queuedSet, setQueuedSet] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState<Set<string>>(new Set());
+  // Sending allowance — drives Send vs "Add to queue" in the review panel.
+  const [usage, setUsage] = useState<{ allowedNow: number; dailyLimit: number; sentToday: number; queued: number } | null>(null);
+  const atLimit = !!usage && usage.allowedNow <= 0;
 
   // Profile drawer
   const [profileModal, setProfileModal] = useState<{ lead: Lead; enrichment: Record<string, unknown> | null; messages: LeadMessage[] } | null>(null);
@@ -118,9 +122,18 @@ export default function LeadsPage() {
     }
   }, []);
 
+  const loadUsage = useCallback(async () => {
+    try {
+      setUsage(await fetchJson<{ allowedNow: number; dailyLimit: number; sentToday: number; queued: number }>('/api/usage'));
+    } catch {
+      /* non-fatal — the panel just keeps showing Send */
+    }
+  }, []);
+
   useEffect(() => {
     loadLeads();
-  }, [loadLeads]);
+    loadUsage();
+  }, [loadLeads, loadUsage]);
 
   // Enrich not-yet-enriched leads progressively: call the endpoint in a loop,
   // reveal newly-enriched leads after each batch, and drive the progress bar.
@@ -233,6 +246,7 @@ export default function LeadsPage() {
     setMsg(null);
     setDrafts({});
     setSent(new Set());
+    setQueuedSet(new Set());
     setSkippedCount(skipped);
     if (eligible.length === 0) {
       setMsg({ text: `All ${skipped} selected lead(s) skipped — not enriched yet (only known contacts can be generated without enrichment).`, error: true });
@@ -280,13 +294,40 @@ export default function LeadsPage() {
       return false;
     } finally {
       setSending((s) => { const n = new Set(s); n.delete(id); return n; });
+      loadUsage();
     }
   }
   async function sendAll() {
     for (const l of preview ?? []) {
-      if (sent.has(l.id)) continue;
+      if (sent.has(l.id) || queuedSet.has(l.id)) continue;
       const ok = await sendOne(l.id);
       if (!ok) break; // stop on failure (e.g. daily limit reached)
+    }
+  }
+  // Add one draft to the auto-send queue (used once the daily cap is reached).
+  async function queueOne(id: string): Promise<boolean> {
+    const body = (drafts[id] ?? '').trim();
+    if (!body) return false;
+    setSending((s) => new Set(s).add(id));
+    try {
+      await fetchJson(`/api/leads/${id}/queue`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      setQueuedSet((s) => new Set(s).add(id));
+      return true;
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : 'Queue failed.', error: true });
+      return false;
+    } finally {
+      setSending((s) => { const n = new Set(s); n.delete(id); return n; });
+      loadUsage();
+    }
+  }
+  async function queueAll() {
+    for (const l of preview ?? []) {
+      if (sent.has(l.id) || queuedSet.has(l.id)) continue;
+      await queueOne(l.id);
     }
   }
   function closePreview() {
@@ -361,6 +402,7 @@ export default function LeadsPage() {
 
   const statusBadge = (s: string | null) =>
     s === 'sent' ? <span className="badge good" style={{ fontSize: 10 }}>sent</span>
+      : s === 'queued' ? <span className="badge progress" style={{ fontSize: 10 }}>queued</span>
       : s === 'draft' ? <span className="badge info" style={{ fontSize: 10 }}>draft</span>
       : null;
 
@@ -553,11 +595,17 @@ export default function LeadsPage() {
                 {skippedCount} selected lead{skippedCount === 1 ? '' : 's'} skipped — not enriched yet. Only known contacts, or fully enriched leads, can be generated.
               </div>
             )}
+            {atLimit && (
+              <div className="notice warn" style={{ fontSize: 12.5 }}>
+                Daily sending limit reached{usage ? ` (${usage.sentToday}/${usage.dailyLimit})` : ''} — use <strong>Add to queue</strong> and these will send automatically during business hours (Mon–Fri, 09:00–18:00).
+              </div>
+            )}
 
             <div style={{ maxHeight: '60vh', overflowY: 'auto', marginTop: 8 }}>
               {preview.map((l) => {
                 const name = leadName(l);
                 const isSent = sent.has(l.id);
+                const isQueued = queuedSet.has(l.id);
                 const isSending = sending.has(l.id);
                 const body = drafts[l.id] ?? '';
                 return (
@@ -567,18 +615,25 @@ export default function LeadsPage() {
                         <span className="avatar-c" style={{ width: 28, height: 28, fontSize: 11, background: avatarColor(name) }}>{initials(name)}</span>
                         <span style={{ fontWeight: 600 }}>{name}</span>
                         {isSent && <span className="badge good">sent</span>}
+                        {isQueued && <span className="badge progress">queued</span>}
                       </span>
-                      {!isSent && (
-                        <button className="btn sm" onClick={() => sendOne(l.id)} disabled={isSending || !body.trim()}>
-                          {isSending ? 'Sending…' : 'Send'}
-                        </button>
+                      {!isSent && !isQueued && (
+                        atLimit ? (
+                          <button className="btn sm" onClick={() => queueOne(l.id)} disabled={isSending || !body.trim()}>
+                            {isSending ? 'Queuing…' : 'Add to queue'}
+                          </button>
+                        ) : (
+                          <button className="btn sm" onClick={() => sendOne(l.id)} disabled={isSending || !body.trim()}>
+                            {isSending ? 'Sending…' : 'Send'}
+                          </button>
+                        )
                       )}
                     </div>
                     {body ? (
                       <textarea
                         rows={6}
                         value={body}
-                        disabled={isSent}
+                        disabled={isSent || isQueued}
                         onChange={(e) => setDrafts((d) => ({ ...d, [l.id]: e.target.value }))}
                         style={{ marginTop: 8 }}
                       />
@@ -591,9 +646,15 @@ export default function LeadsPage() {
             </div>
 
             <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-              <button className="btn" onClick={sendAll} disabled={preview.every((l) => sent.has(l.id)) || sending.size > 0}>
-                Send all
-              </button>
+              {atLimit ? (
+                <button className="btn" onClick={queueAll} disabled={preview.every((l) => sent.has(l.id) || queuedSet.has(l.id)) || sending.size > 0}>
+                  Add all to queue
+                </button>
+              ) : (
+                <button className="btn" onClick={sendAll} disabled={preview.every((l) => sent.has(l.id)) || sending.size > 0}>
+                  Send all
+                </button>
+              )}
             </div>
           </div>
         </div>
