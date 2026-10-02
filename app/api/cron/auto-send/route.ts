@@ -2,8 +2,8 @@ import { type NextRequest } from 'next/server';
 import { json } from '@/lib/http';
 import { serverEnv } from '@/lib/env';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
-import { getUsage } from '@/lib/limits';
-import { isWithinBusinessHours, randomGapMs } from '@/lib/auto-send';
+import { getUsage, DUPLICATE_SEND_WINDOW_MS } from '@/lib/limits';
+import { isWithinBusinessHours, randomGapMs, SENDING_STALE_MS } from '@/lib/auto-send';
 import { unipileSendNewMessage, isUnipileAuthError } from '@/lib/unipile';
 import { log } from '@/lib/log';
 
@@ -36,6 +36,13 @@ export async function GET(req: NextRequest) {
 
   const svc = createSupabaseServiceClient();
   const now = new Date();
+
+  // Crash recovery: a tick that died mid-send can leave a message stuck in
+  // 'sending'. Requeue anything stuck past the stale window so it's not lost —
+  // and because it's 'sending' (not 'queued') in the meantime, it is never
+  // picked up again while a send might still be in flight.
+  const staleIso = new Date(now.getTime() - SENDING_STALE_MS).toISOString();
+  await svc.from('messages').update({ status: 'queued' }).eq('status', 'sending').lt('updated_at', staleIso);
 
   // Accounts that currently have something queued.
   const { data: qrows } = await svc.from('messages').select('account_id').eq('status', 'queued');
@@ -82,6 +89,20 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
+    // Atomic claim: flip queued → sending ONLY if it's still queued. A single
+    // UPDATE is atomic, so if an overlapping tick already claimed it we get 0
+    // rows back and skip. THIS is what prevents sending the same message twice.
+    const { data: claimed } = await svc
+      .from('messages')
+      .update({ status: 'sending', updated_at: now.toISOString() })
+      .eq('id', msg.id)
+      .eq('status', 'queued')
+      .select('id');
+    if (!claimed || claimed.length === 0) {
+      results.push({ accountId, outcome: 'claim-lost' });
+      continue;
+    }
+
     const { data: lead } = await svc
       .from('leads')
       .select('id, provider_member_id')
@@ -95,17 +116,38 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
+    // Lead-level duplicate guard: if this lead was already contacted very
+    // recently (any path), don't send again — drop this message instead.
+    const dupSince = new Date(now.getTime() - DUPLICATE_SEND_WINDOW_MS).toISOString();
+    const { data: recent } = await svc
+      .from('messages')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('lead_id', lead.id)
+      .eq('status', 'sent')
+      .gt('sent_at', dupSince)
+      .limit(1);
+    if (recent && recent.length > 0) {
+      await svc.from('messages').update({ status: 'failed' }).eq('id', msg.id);
+      log.warn('cron', 'duplicate-skipped', { accountId, leadId: lead.id });
+      results.push({ accountId, outcome: 'duplicate-skipped' });
+      continue;
+    }
+
     const text = (msg.body as string) ?? '';
     try {
       const r = await unipileSendNewMessage(account.unipile_account_id as string, lead.provider_member_id, text);
       if (r.chatId) await svc.from('leads').update({ provider_chat_id: r.chatId }).eq('id', lead.id);
     } catch (e) {
       const m = e instanceof Error ? e.message : 'send failed';
+      // Release the claim so the message isn't stranded in 'sending'.
       if (isUnipileAuthError(m)) {
+        await svc.from('messages').update({ status: 'queued' }).eq('id', msg.id);
         await svc.from('linkedin_accounts').update({ status: 'needs_reauth' }).eq('id', accountId);
         results.push({ accountId, outcome: 'needs-reauth' });
       } else {
-        // Transient — leave it queued and try again next tick, but still honor the gap.
+        // Transient — back to queued and try again next tick, but honor the gap.
+        await svc.from('messages').update({ status: 'queued' }).eq('id', msg.id);
         await svc
           .from('linkedin_accounts')
           .update({ next_auto_send_at: new Date(now.getTime() + randomGapMs()).toISOString() })
