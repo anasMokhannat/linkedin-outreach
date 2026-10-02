@@ -15,6 +15,13 @@ export const WEEKLY_MESSAGE_LIMIT = 100;
 export const SEND_JITTER_MS_MIN = 1500;
 export const SEND_JITTER_MS_MAX = 6000;
 
+/**
+ * Lead-level duplicate guard: never contact the same lead twice within this
+ * window. Belt-and-suspenders against any path (auto + manual, network retries)
+ * producing a second first-touch DM to one person.
+ */
+export const DUPLICATE_SEND_WINDOW_MS = 10 * 60_000; // 10 min
+
 export interface UsageWindow {
   sentToday: number;
   sentThisWeek: number;

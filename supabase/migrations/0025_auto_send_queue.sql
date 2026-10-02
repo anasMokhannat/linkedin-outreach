@@ -9,6 +9,14 @@
 -- every auto-send, which is what makes the send times look irregular instead of
 -- firing on the cron's fixed grid.
 
+-- 0009 recreated public.messages WITHOUT 'queued' in the status check
+-- (only draft/approved/sent/failed/rejected). Re-add 'queued' so drafts can be
+-- parked for the scheduler. Drop-then-add keeps this idempotent / re-runnable.
+alter table public.messages drop constraint if exists messages_status_check;
+alter table public.messages
+  add constraint messages_status_check
+  check (status in ('draft','approved','queued','sent','failed','rejected'));
+
 alter table public.linkedin_accounts
   add column if not exists next_auto_send_at timestamptz;
 

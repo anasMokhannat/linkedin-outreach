@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server';
 import { requireAccountId, HttpError } from '@/lib/auth';
 import { errorResponse, json } from '@/lib/http';
 import { createSupabaseServiceClient } from '@/lib/supabase-server';
-import { getUsage } from '@/lib/limits';
+import { getUsage, DUPLICATE_SEND_WINDOW_MS } from '@/lib/limits';
 import { unipileSendNewMessage, isUnipileAuthError } from '@/lib/unipile';
 import { log } from '@/lib/log';
 
@@ -41,6 +41,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .maybeSingle();
     if (!account?.unipile_account_id || account.status !== 'connected') {
       throw new HttpError(409, 'LinkedIn account not connected.');
+    }
+
+    // Lead-level duplicate guard: block a second first-touch DM to the same lead
+    // within the window (covers accidental re-sends and auto/manual overlap).
+    const dupSince = new Date(Date.now() - DUPLICATE_SEND_WINDOW_MS).toISOString();
+    const { data: recent } = await svc
+      .from('messages')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('lead_id', lead.id)
+      .eq('status', 'sent')
+      .gt('sent_at', dupSince)
+      .limit(1);
+    if (recent && recent.length > 0) {
+      throw new HttpError(409, 'Already messaged this lead moments ago — not sending again.');
     }
 
     try {

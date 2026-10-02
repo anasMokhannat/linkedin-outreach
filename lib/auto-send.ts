@@ -19,6 +19,11 @@ export const AUTO_SEND_DAYS = [1, 2, 3, 4, 5]; // Mon–Fri (0=Sun … 6=Sat)
 export const AUTO_SEND_GAP_MIN_MS = 8 * 60_000; // 8 min
 export const AUTO_SEND_GAP_MAX_MS = 40 * 60_000; // 40 min
 
+// How long a message may sit in 'sending' before it's considered stuck (a tick
+// that crashed/timed out mid-send) and requeued. Must exceed the function's max
+// runtime so we never requeue a send that's still legitimately in flight.
+export const SENDING_STALE_MS = 15 * 60_000; // 15 min
+
 /** A random gap (ms) to wait before the next auto-send for an account. */
 export function randomGapMs(): number {
   return Math.floor(AUTO_SEND_GAP_MIN_MS + Math.random() * (AUTO_SEND_GAP_MAX_MS - AUTO_SEND_GAP_MIN_MS));
