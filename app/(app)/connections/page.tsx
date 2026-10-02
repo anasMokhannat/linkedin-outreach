@@ -28,6 +28,11 @@ export default function ConnectionsPage() {
   const [knownConns, setKnownConns] = useState<Set<string>>(new Set()); // marked "I already know them"
   const [page, setPage] = useState(1);
   const autoSynced = useRef(false);
+  // "Removed" view — connections the user hid from the list (restorable).
+  const [view, setView] = useState<'active' | 'removed'>('active');
+  const [removedConns, setRemovedConns] = useState<Staged[]>([]);
+  const [removedLoaded, setRemovedLoaded] = useState(false);
+  const [selRemoved, setSelRemoved] = useState<Set<string>>(new Set());
 
   // Single request: the connections endpoint already returns the account status
   // (409 when no LinkedIn), the cached connections AND lastSyncAt — no separate
@@ -146,6 +151,69 @@ export default function ConnectionsPage() {
     }
   }
 
+  const loadRemoved = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ connections?: Staged[] }>('/api/connections?view=removed');
+      setRemovedConns(data.connections ?? []);
+    } catch (e) {
+      setMsg('Could not load removed connections: ' + (e instanceof Error ? e.message : 'error'));
+    } finally {
+      setRemovedLoaded(true);
+    }
+  }, []);
+
+  function switchView(v: 'active' | 'removed') {
+    setView(v);
+    setMsg(null);
+    if (v === 'removed') { setSelRemoved(new Set()); loadRemoved(); }
+    else { setSelConns(new Set()); }
+  }
+
+  // Bring removed connections back into the active list.
+  async function restoreConns(urls: string[]) {
+    if (!urls.length) return;
+    const set = new Set(urls);
+    setRemovedConns((prev) => prev.filter((c) => !set.has(c.profileUrl)));
+    setSelRemoved((p) => { const n = new Set(p); urls.forEach((u) => n.delete(u)); return n; });
+    try {
+      await fetchJson('/api/connections/dismiss', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ profileUrls: urls, restore: true }),
+      });
+      loadConnections(); // refresh the active list so restored ones reappear
+    } catch (e) {
+      setMsg('Could not restore: ' + (e instanceof Error ? e.message : 'error'));
+      loadRemoved();
+    }
+  }
+  function toggleRemoved(url: string) {
+    setSelRemoved((p) => { const n = new Set(p); n.has(url) ? n.delete(url) : n.add(url); return n; });
+  }
+  const allRemovedSelected = removedConns.length > 0 && removedConns.every((c) => selRemoved.has(c.profileUrl));
+  function toggleSelectAllRemoved() {
+    setSelRemoved(allRemovedSelected ? new Set() : new Set(removedConns.map((c) => c.profileUrl)));
+  }
+
+  // Remove connection(s) from the in-app list only (NOT from LinkedIn). They're
+  // marked dismissed on the account so they stay hidden across future syncs.
+  async function dismissConns(urls: string[]) {
+    if (!urls.length) return;
+    const set = new Set(urls);
+    // Optimistic: drop from the visible list + any selection/known state.
+    setConns((prev) => prev.filter((c) => !set.has(c.profileUrl)));
+    setSelConns((p) => { const n = new Set(p); urls.forEach((u) => n.delete(u)); return n; });
+    setKnownConns((p) => { const n = new Set(p); urls.forEach((u) => n.delete(u)); return n; });
+    try {
+      await fetchJson('/api/connections/dismiss', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ profileUrls: urls }),
+      });
+    } catch (e) {
+      setMsg('Could not remove: ' + (e instanceof Error ? e.message : 'error'));
+      loadConnections(); // re-sync the list if the server rejected it
+    }
+  }
+
   const eligibleCount = eligibleUrls.length;
 
   return (
@@ -173,6 +241,15 @@ export default function ConnectionsPage() {
         </div>
       ) : (
       <div className="card">
+        <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+          <button className={`btn sm ${view === 'active' ? '' : 'ghost'}`} onClick={() => switchView('active')}>Active</button>
+          <button className={`btn sm ${view === 'removed' ? '' : 'ghost'}`} onClick={() => switchView('removed')}>
+            Removed{removedConns.length ? ` (${removedConns.length})` : ''}
+          </button>
+        </div>
+
+        {view === 'active' ? (
+        <>
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2 style={{ margin: 0 }}>
             {syncStatus === 'none' && !connsLoaded
@@ -182,6 +259,11 @@ export default function ConnectionsPage() {
           </h2>
           <div className="row" style={{ gap: 8 }}>
             <button className="btn ghost sm" onClick={toggleSelectAll} disabled={eligibleCount === 0}>{allSelected ? 'Deselect all' : 'Select all'}</button>
+            {selConns.size > 0 && (
+              <button className="btn ghost sm" onClick={() => dismissConns(Array.from(selConns))} disabled={busy.add} title="Remove the selected connections from this list (does not affect your LinkedIn connection)">
+                Remove {selConns.size}
+              </button>
+            )}
             <button className="btn" onClick={addSelectedConns} disabled={selConns.size === 0 || busy.add}>
               {busy.add ? 'Adding…' : `Add ${selConns.size || ''} to leads`}
             </button>
@@ -196,7 +278,7 @@ export default function ConnectionsPage() {
         </div>
         <div className="table-wrap" style={{ maxHeight: 520, overflowY: 'auto', marginTop: 6 }}>
           <table>
-            <thead><tr><th></th><th>Name</th><th>Headline</th><th style={{ width: 90 }} title="Toggle on the connections you already know — they won't be enriched and will get a warmer message">Known</th></tr></thead>
+            <thead><tr><th></th><th>Name</th><th>Headline</th><th style={{ width: 90 }} title="Toggle on the connections you already know — they won't be enriched and will get a warmer message">Known</th><th style={{ width: 44 }} aria-label="Remove" /></tr></thead>
             <tbody>
               {pageConns.map((c) => (
                 <tr key={c.profileUrl}>
@@ -214,10 +296,13 @@ export default function ConnectionsPage() {
                       </label>
                     )}
                   </td>
+                  <td>
+                    <button className="btn ghost sm" title="Remove from this list (does not remove your LinkedIn connection)" aria-label="Remove from list" onClick={() => dismissConns([c.profileUrl])}>✕</button>
+                  </td>
                 </tr>
               ))}
               {connsLoaded && conns.length === 0 && (
-                <tr><td colSpan={4} className="muted">No connections match your ICP yet — sync runs automatically on open.</td></tr>
+                <tr><td colSpan={5} className="muted">No connections match your ICP yet — sync runs automatically on open.</td></tr>
               )}
             </tbody>
           </table>
@@ -235,6 +320,47 @@ export default function ConnectionsPage() {
               </span>
             )}
           </div>
+        )}
+        </>
+        ) : (
+        <>
+          <p className="muted" style={{ fontSize: 13 }}>
+            Connections you removed from this list. Restoring brings them back to the active list — your actual LinkedIn connection was never affected.
+          </p>
+          <div className="row" style={{ gap: 8, marginBottom: 6 }}>
+            <button className="btn ghost sm" onClick={toggleSelectAllRemoved} disabled={removedConns.length === 0}>
+              {allRemovedSelected ? 'Deselect all' : 'Select all'}
+            </button>
+            {selRemoved.size > 0 && (
+              <button className="btn" onClick={() => restoreConns(Array.from(selRemoved))}>Restore {selRemoved.size}</button>
+            )}
+          </div>
+          <div className="table-wrap" style={{ maxHeight: 520, overflowY: 'auto', marginTop: 6 }}>
+            <table>
+              <thead><tr><th></th><th>Name</th><th>Headline</th><th style={{ width: 80 }} aria-label="Restore" /></tr></thead>
+              <tbody>
+                {removedConns.map((c) => (
+                  <tr key={c.profileUrl}>
+                    <td style={{ width: 36 }}>
+                      <input type="checkbox" style={{ width: 'auto' }} checked={selRemoved.has(c.profileUrl)} onChange={() => toggleRemoved(c.profileUrl)} />
+                    </td>
+                    <td><a href={c.profileUrl} target="_blank" rel="noreferrer">{c.fullName}</a></td>
+                    <td className="muted">{c.headline ?? '—'}</td>
+                    <td>
+                      <button className="btn ghost sm" title="Restore to the active list" onClick={() => restoreConns([c.profileUrl])}>Restore</button>
+                    </td>
+                  </tr>
+                ))}
+                {!removedLoaded && (
+                  <tr><td colSpan={4} className="muted">Loading…</td></tr>
+                )}
+                {removedLoaded && removedConns.length === 0 && (
+                  <tr><td colSpan={4} className="muted">No removed connections.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
         )}
       </div>
       )}
