@@ -18,19 +18,22 @@ export async function GET() {
       .from('messages')
       .select('id, lead_id, body, status, model, edited_by_user, created_at, sent_at')
       .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(100000);
     if (error) throw new Error(error.message);
 
-    const leadIds = Array.from(new Set((msgs ?? []).map((m) => m.lead_id).filter(Boolean)));
+    // Hydrate lead name/title/company. We fetch the account's leads in ONE
+    // bounded query (scoped by account_id) instead of a giant `.in(id, [...])`
+    // filter — with hundreds of messages that id list made the request URL
+    // overflow and fail, so every row fell back to the "Lead" placeholder.
     const byId = new Map<string, { first_name: string | null; last_name: string | null; current_title: string | null; current_company: string | null }>();
-    if (leadIds.length > 0) {
-      const { data: leads } = await svc
-        .from('leads')
-        .select('id, first_name, last_name, current_title, current_company')
-        .eq('account_id', accountId)
-        .in('id', leadIds);
-      (leads ?? []).forEach((l) => byId.set(l.id, l));
-    }
+    const { data: leads, error: leadsError } = await svc
+      .from('leads')
+      .select('id, first_name, last_name, current_title, current_company')
+      .eq('account_id', accountId)
+      .limit(100000);
+    if (leadsError) throw new Error(leadsError.message);
+    (leads ?? []).forEach((l) => byId.set(l.id, l));
 
     const messages = (msgs ?? []).map((m) => {
       const l = byId.get(m.lead_id);
